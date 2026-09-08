@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'New tier' if is_new else tier.display_name }}{% endblock %}
+{% block page_title %}{{ 'New Tier' if is_new else 'Edit Tier — ' + tier.display_name }}{% endblock %}
+
+{% block topbar_actions %}
+<a href="/tiers" class="btn btn-secondary">&larr; All tiers</a>
+{% endblock %}
+
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, msg in messages %}
+    <div class="alert alert-{{ 'danger' if category == 'error' else category }}" style="margin-bottom:16px;">{{ msg }}</div>
+    {% endfor %}
+{% endwith %}
+
+{% if not can_edit %}
+<div class="alert alert-info" style="margin-bottom:16px;">You have view-only access to tiers. Editing requires the admin, sales, or support role.</div>
+{% endif %}
+
+{% set dis = '' if can_edit else 'disabled' %}
+{% macro num(name, val, hint='') %}
+<div style="margin-bottom:14px;">
+    <label style="display:block; font-size:13px; font-weight:600; color:var(--gray-700); margin-bottom:4px;">{{ name.replace('_',' ')|title }}</label>
+    <input type="number" step="any" name="{{ name }}" value="{{ val if val is not none else '' }}" {{ dis }}
+           style="width:100%; padding:8px 10px; border:1px solid var(--gray-300,#d1d5db); border-radius:6px; font-size:14px;">
+    {% if hint %}<div style="font-size:11px; color:var(--gray-500); margin-top:3px;">{{ hint }}</div>{% endif %}
+</div>
+{% endmacro %}
+{% macro cap(name, label) %}
+<label style="display:flex; align-items:center; gap:8px; font-size:13px; padding:5px 0; cursor:pointer;">
+    <input type="checkbox" name="{{ name }}" value="1" {% if tier and tier[name] %}checked{% endif %} {{ dis }}>
+    {{ label }}
+</label>
+{% endmacro %}
+
+<form method="post" action="{{ '/tiers' if is_new else '/tiers/' + tier.tier_key }}">
+
+<div class="card" style="margin-bottom:18px;">
+    <div class="card-header"><h2 class="card-title">Identity</h2></div>
+    <div style="padding:16px 18px;">
+        <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:13px; font-weight:600; color:var(--gray-700); margin-bottom:4px;">Tier key</label>
+            {% if is_new %}
+            <input type="text" name="tier_key" value="" {{ dis }} placeholder="e.g. agency_medium"
+                   style="width:100%; padding:8px 10px; border:1px solid var(--gray-300,#d1d5db); border-radius:6px; font-size:14px;">
+            <div style="font-size:11px; color:var(--gray-500); margin-top:3px;">Lowercase letters/numbers/underscores, starting with a letter. Permanent once set — never rename a key that has subscribers.</div>
+            {% else %}
+            <div style="font-family:monospace; font-size:14px; color:var(--gray-700);">{{ tier.tier_key }} <span style="color:var(--gray-400); font-size:11px;">(immutable)</span></div>
+            {% endif %}
+        </div>
+        <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:13px; font-weight:600; color:var(--gray-700); margin-bottom:4px;">Track</label>
+            <select name="track" {{ dis }} style="width:100%; padding:8px 10px; border:1px solid var(--gray-300,#d1d5db); border-radius:6px; font-size:14px;">
+                {% for tr in tracks %}
+                <option value="{{ tr }}" {% if tier and tier.track == tr %}selected{% endif %}>{{ tr|title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:13px; font-weight:600; color:var(--gray-700); margin-bottom:4px;">Display name</label>
+            <input type="text" name="display_name" value="{{ tier.display_name if tier else '' }}" {{ dis }}
+                   style="width:100%; padding:8px 10px; border:1px solid var(--gray-300,#d1d5db); border-radius:6px; font-size:14px;">
+        </div>
+        {{ num('display_order', tier.display_order if tier else 0, 'Sort order within track (1 = lowest tier).') }}
+        <label style="display:flex; align-items:center; gap:8px; font-size:14px; padding:5px 0; cursor:pointer;">
+            <input type="checkbox" name="is_active" value="1" {% if tier and tier.is_active %}checked{% endif %}{% if is_new %} checked{% endif %} {{ dis }}>
+            Active (available for new signups)
+        </label>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <div class="card-header"><h2 class="card-title">Limits</h2></div>
+    <div style="padding:16px 18px; display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+        {{ num('max_domains', tier.max_domains if tier else 1, '-1 = unlimited (Agency track).') }}
+        {{ num('max_seats', tier.max_seats if tier else 1) }}
+        {{ num('max_queries_per_domain', tier.max_queries_per_domain if tier else none, 'Business track. Leave blank for Agency (uses query pool).') }}
+        {{ num('query_pool', tier.query_pool if tier else none, 'Agency track total pool. Leave blank for Business.') }}
+        {{ num('max_competitors_per_domain', tier.max_competitors_per_domain if tier else 0, '-1 = unlimited.') }}
+        {{ num('max_scans_per_day', tier.max_scans_per_day if tier else 100, 'Daily runaway-protection cap.') }}
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <div class="card-header"><h2 class="card-title">Capabilities</h2></div>
+    <div style="padding:16px 18px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 24px;">
+        <div>
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin:0 0 6px;">Reporting</div>
+            {{ cap('cap_reports_basic', 'Basic reports') }}
+            {{ cap('cap_reports_professional', 'Professional reports') }}
+            {{ cap('cap_reports_all', 'All report types') }}
+            {{ cap('cap_white_label', 'White-label reports') }}
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin:14px 0 6px;">Analysis</div>
+            {{ cap('cap_competitor_tracking', 'Competitor tracking') }}
+            {{ cap('cap_sentiment_analysis', 'Sentiment analysis') }}
+            {{ cap('cap_hallucination_detection', 'Hallucination detection') }}
+            {{ cap('cap_hallucination_autowatch', 'Hallucination auto-watch') }}
+            {{ cap('cap_strategic_insights', 'Strategic Insights') }}
+            {{ cap('cap_strategic_insights_email', 'Strategic Insights email') }}
+        </div>
+        <div>
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin:0 0 6px;">Support &amp; SLA</div>
+            {{ cap('cap_priority_support', 'Priority support') }}
+            {{ cap('cap_dedicated_support', 'Dedicated support') }}
+            {{ cap('cap_sla', 'SLA') }}
+            {{ cap('cap_custom_onboarding', 'Custom onboarding') }}
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin:14px 0 6px;">Security &amp; Compliance</div>
+            {{ cap('cap_sso_saml', 'SSO / SAML') }}
+            {{ cap('cap_soc2', 'SOC 2') }}
+        </div>
+        <div>
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin:0 0 6px;">Team &amp; White-label</div>
+            {{ cap('cap_white_label', 'White-label') }}
+            {{ cap('cap_viewer_role', 'Viewer role') }}
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin:14px 0 6px;">API &amp; Add-ons</div>
+            {{ cap('cap_api_access', 'API access') }}
+            {{ cap('cap_addon_seats', 'Add-on seats') }}
+            {{ cap('cap_addon_domains', 'Add-on domains') }}
+            {{ cap('cap_addon_queries', 'Add-on queries') }}
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <div class="card-header"><h2 class="card-title">Pricing</h2></div>
+    <div style="padding:16px 18px; display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
+        {{ num('price_monthly', tier.price_monthly if tier else 0, 'For display/calculator, not WooCommerce billing.') }}
+        {{ num('price_annual', tier.price_annual if tier else 0) }}
+        {{ num('addon_seat_price', tier.addon_seat_price if tier else none, 'Per-seat monthly add-on. Blank = n/a.') }}
+        {{ num('addon_domain_price', tier.addon_domain_price if tier else none, 'Per-domain monthly add-on (Business). Blank = n/a.') }}
+        {{ num('addon_query_price', tier.addon_query_price if tier else none, 'Per-query monthly add-on. Blank = n/a.') }}
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <div class="card-header"><h2 class="card-title">WooCommerce</h2></div>
+    <div style="padding:16px 18px;">
+        {{ num('wc_product_id', tier.wc_product_id if tier else none, 'WordPress admin → Products → edit → the ID is in the URL. Resolves subscriptions to this tier.') }}
+        <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:13px; font-weight:600; color:var(--gray-700); margin-bottom:4px;">WC product slug</label>
+            <input type="text" name="wc_product_slug" value="{{ tier.wc_product_slug if tier and tier.wc_product_slug is not none else '' }}" {{ dis }}
+                   style="width:100%; padding:8px 10px; border:1px solid var(--gray-300,#d1d5db); border-radius:6px; font-size:14px;">
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+    <div class="card-header"><h2 class="card-title">Metadata</h2></div>
+    <div style="padding:16px 18px;">
+        <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:13px; font-weight:600; color:var(--gray-700); margin-bottom:4px;">Suitable for</label>
+            <input type="text" name="suitable_for" value="{{ tier.suitable_for if tier and tier.suitable_for is not none else '' }}" {{ dis }}
+                   style="width:100%; padding:8px 10px; border:1px solid var(--gray-300,#d1d5db); border-radius:6px; font-size:14px;">
+        </div>
+        <div>
+            <label style="display:block; font-size:13px; font-weight:600; color:var(--gray-700); margin-bottom:4px;">Short description</label>
+            <textarea name="description_short" rows="2" {{ dis }}
+                      style="width:100%; padding:8px 10px; border:1px solid var(--gray-300,#d1d5db); border-radius:6px; font-size:14px;">{{ tier.description_short if tier and tier.description_short is not none else '' }}</textarea>
+        </div>
+    </div>
+</div>
+
+{% if can_edit %}
+<div style="display:flex; gap:12px; margin-bottom:24px;">
+    <button type="submit" class="btn btn-primary">{{ 'Create tier' if is_new else 'Save changes' }}</button>
+    <a href="/tiers" class="btn btn-secondary">Cancel</a>
+</div>
+{% endif %}
+
+</form>
+
+{% if tier_json %}
+<div class="card" style="margin-bottom:24px;">
+    <div class="card-header"><h2 class="card-title">Stored values (JSON) — what the plugin reads</h2></div>
+    <pre style="margin:0; padding:16px 18px; font-size:12px; color:var(--gray-700); overflow-x:auto; white-space:pre;">{{ tier_json }}</pre>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+
+{% block title %}Marketing{% endblock %}
+{% block page_title %}Marketing{% endblock %}
+
+{% block content %}
+
+<!-- Date range selector -->
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+    <div style="font-size:13px; color:var(--gray-500);">
+        {% if data.fetched_at %}
+            citemetrix.com &middot; last {{ days }} days &middot; fetched {{ data.fetched_at }}
+        {% else %}
+            citemetrix.com analytics
+        {% endif %}
+    </div>
+    <div>
+        {% for d in [7, 28, 90] %}
+            <a href="?days={{ d }}" class="btn {% if days == d %}btn-primary{% else %}btn-secondary{% endif %}" style="margin-left:6px; font-size:12px; padding:6px 12px;">{{ d }}d</a>
+        {% endfor %}
+    </div>
+</div>
+
+{% if data.error %}
+<div class="alert alert-danger">
+    <strong>Marketing API error:</strong> {{ data.error }}
+    {% if data.detail %}
+        <pre style="margin-top:8px; font-size:11px; background:rgba(0,0,0,0.04); padding:8px; border-radius:4px; overflow-x:auto;">{{ data.detail | tojson(indent=2) }}</pre>
+    {% endif %}
+</div>
+{% else %}
+
+<!-- ───────────────────── GA4 Hero Stats ───────────────────── -->
+{% if data.ga4 and data.ga4.totals %}
+<div class="grid grid-4" style="margin-bottom:24px;">
+    <div class="stat-card">
+        <div class="stat-label">Sessions</div>
+        <div class="stat-value">{{ "{:,}".format(data.ga4.totals.sessions or 0) }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">GA4, last {{ days }}d</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Users</div>
+        <div class="stat-value">{{ "{:,}".format(data.ga4.totals.users or 0) }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">{{ "{:,}".format(data.ga4.totals.new_users or 0) }} new</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Engaged Sessions</div>
+        <div class="stat-value">{{ "{:,}".format(data.ga4.totals.engaged_sessions or 0) }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">
+            {% if data.ga4.totals.sessions and data.ga4.totals.sessions > 0 %}
+                {{ "{:.1f}".format((data.ga4.totals.engaged_sessions / data.ga4.totals.sessions) * 100) }}% engagement rate
+            {% else %}
+                &mdash;
+            {% endif %}
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Session</div>
+        <div class="stat-value">{{ "{:.0f}".format(data.ga4.totals.avg_duration or 0) }}s</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Average duration</div>
+    </div>
+</div>
+{% endif %}
+
+{% if data.ga4 and data.ga4.errors %}
+<div class="alert alert-warning" style="margin-bottom:16px;">
+    <strong>Some GA4 components failed:</strong>
+    <ul style="margin:8px 0 0; padding-left:20px;">
+    {% for err in data.ga4.errors %}
+        <li>{{ err.component }}: {{ err.message }}</li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<!-- ───────────────────── Two-column: Top Sources + Top Pages ───────────────────── -->
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Top Traffic Sources</h2></div>
+        {% if data.ga4 and data.ga4.top_sources %}
+            {% for s in data.ga4.top_sources %}
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--gray-100); font-size:14px;">
+                <div style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:12px;">{{ s.source or '(direct)' }}</div>
+                <div style="text-align:right; font-weight:500; min-width:60px;">{{ "{:,}".format(s.sessions) }}</div>
+                <div style="text-align:right; color:var(--gray-400); font-size:12px; min-width:60px;">{{ "{:,}".format(s.users) }} users</div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div style="padding:24px; text-align:center; color:var(--gray-500);">No source data</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Top Landing Pages</h2></div>
+        {% if data.ga4 and data.ga4.top_pages %}
+            {% for p in data.ga4.top_pages %}
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--gray-100); font-size:14px;">
+                <div style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:12px; font-family:monospace; font-size:12px;">{{ p.path or '/' }}</div>
+                <div style="text-align:right; font-weight:500; min-width:60px;">{{ "{:,}".format(p.sessions) }}</div>
+                <div style="text-align:right; color:var(--gray-400); font-size:12px; min-width:55px;">{{ p.engagement_rate }}%</div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div style="padding:24px; text-align:center; color:var(--gray-500);">No page data</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ───────────────────── GSC Hero Stats ───────────────────── -->
+{% if data.gsc and data.gsc.totals %}
+<div style="margin-top:32px; margin-bottom:16px; font-size:13px; color:var(--gray-500); font-weight:600; text-transform:uppercase; letter-spacing:0.5px;">Search Console</div>
+<div class="grid grid-4" style="margin-bottom:24px;">
+    <div class="stat-card">
+        <div class="stat-label">Clicks</div>
+        <div class="stat-value">{{ "{:,}".format(data.gsc.totals.clicks or 0) }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Organic search</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Impressions</div>
+        <div class="stat-value">{{ "{:,}".format(data.gsc.totals.impressions or 0) }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">In search results</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">CTR</div>
+        <div class="stat-value">{{ data.gsc.totals.ctr }}%</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Click-through rate</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Avg Position</div>
+        <div class="stat-value">{{ data.gsc.totals.position }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Average rank</div>
+    </div>
+</div>
+{% endif %}
+
+{% if data.gsc and data.gsc.errors %}
+<div class="alert alert-warning" style="margin-bottom:16px;">
+    <strong>Some Search Console components failed:</strong>
+    <ul style="margin:8px 0 0; padding-left:20px;">
+    {% for err in data.gsc.errors %}
+        <li>{{ err.component }}: {{ err.message }}</li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<!-- ───────────────────── Top Search Queries ───────────────────── -->
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Top Search Queries</h2></div>
+    {% if data.gsc and data.gsc.top_queries %}
+    <table style="width:100%; border-collapse:collapse;">
+        <thead>
+            <tr style="border-bottom:2px solid var(--gray-200); font-size:12px; color:var(--gray-500); text-transform:uppercase; letter-spacing:0.5px;">
+                <th style="text-align:left; padding:10px 8px;">Query</th>
+                <th style="text-align:right; padding:10px 8px; width:80px;">Clicks</th>
+                <th style="text-align:right; padding:10px 8px; width:100px;">Impressions</th>
+                <th style="text-align:right; padding:10px 8px; width:70px;">CTR</th>
+                <th style="text-align:right; padding:10px 8px; width:80px;">Position</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for q in data.gsc.top_queries %}
+            <tr style="border-bottom:1px solid var(--gray-100); font-size:14px;">
+                <td style="padding:10px 8px;">{{ q.query }}</td>
+                <td style="text-align:right; padding:10px 8px; font-weight:500;">{{ "{:,}".format(q.clicks) }}</td>
+                <td style="text-align:right; padding:10px 8px;">{{ "{:,}".format(q.impressions) }}</td>
+                <td style="text-align:right; padding:10px 8px; color:var(--gray-500);">{{ q.ctr }}%</td>
+                <td style="text-align:right; padding:10px 8px; color:var(--gray-500);">{{ q.position }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="padding:24px; text-align:center; color:var(--gray-500);">No query data</div>
+    {% endif %}
+</div>
+
+<!-- ───────────────────── Config footer ───────────────────── -->
+{% if data.config %}
+<div style="margin-top:24px; padding:12px 16px; background:var(--gray-50); border-radius:6px; font-size:11px; color:var(--gray-500); font-family:monospace;">
+    GA4: {{ data.config.ga4_property_id }} &nbsp;&middot;&nbsp;
+    GSC: {{ data.config.gsc_site_url }} &nbsp;&middot;&nbsp;
+    Owner: user_id={{ data.config.owner_user_id }}
+</div>
+{% endif %}
+
+{% endif %}{# end if not data.error #}
+
+{% endblock %}

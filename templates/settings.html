@@ -1,0 +1,267 @@
+
+{% extends "base.html" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block page_title %}Settings{% endblock %}
+
+{% block content %}
+
+<style>
+
+.settings-section { background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+
+.settings-section h2 { margin: 0 0 8px; font-size: 18px; }
+
+.settings-section p { color: var(--gray-500); font-size: 14px; margin: 0 0 20px; }
+
+.form-group { margin-bottom: 16px; }
+
+.form-group label { display: block; font-weight: 500; margin-bottom: 6px; font-size: 14px; }
+
+.form-group input { width: 100%; padding: 10px 12px; border: 1px solid var(--gray-200); border-radius: 8px; font-size: 14px; }
+
+.form-group input:focus { outline: none; border-color: var(--primary); }
+
+.form-group .hint { font-size: 12px; color: var(--gray-500); margin-top: 4px; }
+
+.key-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; margin-left: 8px; }
+
+.key-status.configured { color: var(--success); }
+
+.key-status.not-configured { color: var(--warning); }
+
+.btn-save { background: var(--primary); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 500; cursor: pointer; }
+
+.btn-save:hover { background: var(--primary-dark); }
+
+.btn-save:disabled { background: var(--gray-300); cursor: not-allowed; }
+
+.save-message { margin-left: 12px; font-size: 14px; }
+
+.save-message.success { color: var(--success); }
+
+.save-message.error { color: var(--danger); }
+
+</style>
+
+
+
+<div class="settings-section">
+
+    <h2>API Keys</h2>
+
+    <p>CiteMetrix <strong>system keys</strong> for admin-side analysis tools (competitor research). These are the company&#39;s own keys &mdash; <strong>not client keys</strong>. Customer BYOK keys are managed by each customer inside the app and never appear here.</p>
+
+    
+
+    <form id="apiKeysForm">
+
+        <div class="form-group">
+
+            <label>
+
+                Anthropic API Key
+
+                <span id="anthropicStatus" class="key-status"></span>
+
+            </label>
+
+            <input type="password" id="anthropic_api_key" name="anthropic_api_key" placeholder="sk-ant-...">
+
+            <div class="hint">Used for competitor analysis with Claude. Get your key at <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a></div>
+
+        </div>
+
+        
+
+        <div class="form-group">
+
+            <label>
+
+                Perplexity API Key
+
+                <span id="perplexityStatus" class="key-status"></span>
+
+            </label>
+
+            <input type="password" id="perplexity_api_key" name="perplexity_api_key" placeholder="pplx-...">
+
+            <div class="hint">Used for web research on competitors. Get your key at <a href="https://www.perplexity.ai/settings/api" target="_blank">perplexity.ai/settings/api</a></div>
+
+        </div>
+
+        
+
+        <button type="submit" class="btn-save" id="saveBtn">Save API Keys</button>
+
+        <span id="saveMessage" class="save-message"></span>
+
+    </form>
+
+</div>
+
+
+
+<div class="settings-section">
+
+    <h2>User Management</h2>
+
+    <p>Manage admin portal users and their roles.</p>
+
+    <p>Manage portal users, roles, and invitations on the <a href="/team" style="color: var(--primary);">Staff &amp; Access</a> page.</p>
+
+</div>
+
+
+
+<script>
+
+// Load current key status
+
+async function loadKeyStatus() {
+
+    try {
+
+        const res = await fetch('/api/settings/keys');
+
+        const data = await res.json();
+
+        
+
+        const anthropic = data.anthropic_api_key;
+
+        const perplexity = data.perplexity_api_key;
+
+        
+
+        document.getElementById('anthropicStatus').innerHTML = anthropic?.configured 
+
+            ? '<span class="key-status configured">✓ Configured</span>'
+
+            : '<span class="key-status not-configured">⚠ Not configured</span>';
+
+            
+
+        document.getElementById('perplexityStatus').innerHTML = perplexity?.configured 
+
+            ? '<span class="key-status configured">✓ Configured</span>'
+
+            : '<span class="key-status not-configured">⚠ Not configured</span>';
+
+    } catch (e) {
+
+        console.error('Failed to load key status:', e);
+
+    }
+
+}
+
+
+
+document.getElementById('apiKeysForm').addEventListener('submit', async (e) => {
+
+    e.preventDefault();
+
+    
+
+    const btn = document.getElementById('saveBtn');
+
+    const msg = document.getElementById('saveMessage');
+
+    
+
+    const anthropic = document.getElementById('anthropic_api_key').value.trim();
+
+    const perplexity = document.getElementById('perplexity_api_key').value.trim();
+
+    
+
+    if (!anthropic && !perplexity) {
+
+        msg.className = 'save-message error';
+
+        msg.textContent = 'Enter at least one API key';
+
+        return;
+
+    }
+
+    
+
+    btn.disabled = true;
+
+    btn.textContent = 'Saving...';
+
+    msg.textContent = '';
+
+    
+
+    try {
+
+        const payload = {};
+
+        if (anthropic) payload.anthropic_api_key = anthropic;
+
+        if (perplexity) payload.perplexity_api_key = perplexity;
+
+        
+
+        const res = await fetch('/api/settings/keys', {
+
+            method: 'POST',
+
+            headers: { 'Content-Type': 'application/json' },
+
+            body: JSON.stringify(payload)
+
+        });
+
+        
+
+        const data = await res.json();
+
+        
+
+        if (data.success) {
+
+            msg.className = 'save-message success';
+
+            msg.textContent = '✓ Saved successfully';
+
+            document.getElementById('anthropic_api_key').value = '';
+
+            document.getElementById('perplexity_api_key').value = '';
+
+            loadKeyStatus();
+
+        } else {
+
+            throw new Error(data.error || 'Failed to save');
+
+        }
+
+    } catch (e) {
+
+        msg.className = 'save-message error';
+
+        msg.textContent = 'Error: ' + e.message;
+
+    } finally {
+
+        btn.disabled = false;
+
+        btn.textContent = 'Save API Keys';
+
+    }
+
+});
+
+
+
+loadKeyStatus();
+
+</script>
+
+{% endblock %}
+

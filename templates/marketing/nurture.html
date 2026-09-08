@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Nurture{% endblock %}
+{% block page_title %}Nurture Sequences{% endblock %}
+{% block content %}
+
+{% set SEQ = {
+  'agency': {'label':'Agency', 'desc':'Leads from /agencies/ — client-portfolio angle, white-label; the sequence ends in a live demo.', 'emails':[
+     {'when':'Day 2','key':'d2','subject':"Your clients are being described by AI right now — are you watching?",'cta':'See the Agency plans','dest':'/pricing/agencies/'},
+     {'when':'Day 5','key':'d5','subject':"Every client, one dashboard — under your brand",'cta':'See Agency plans','dest':'/pricing/agencies/'},
+     {'when':'Day 8','key':'d8','subject':"Monitoring finds problems. Fixing keeps the retainer.",'cta':'Book a 15-min call (bring a client URL)','dest':'/book-demo/'}]},
+  'comparison': {'label':'Comparison', 'desc':'Leads from vs-pages & /compare/ — "you were evaluating tools." Day 2 is competitor-specific for Profound / SEMrush / Brandlight leads.', 'emails':[
+     {'when':'Day 2','key':'d2','subject':"The question most people miss when comparing AI-visibility tools",'cta':'See the full comparison','dest':'/compare/'},
+     {'when':'Day 5','key':'d5','subject':"On monitoring they all look alike. Here's where they split.",'cta':'Full comparison','dest':'/compare/'},
+     {'when':'Day 8','key':'d8','subject':"Still deciding? The math is simple.",'cta':'See plans','dest':'/pricing/'}]},
+  'generic': {'label':'Generic', 'desc':'Default sequence (also serves business-page leads). Day 2 leads with the dual-score recognition-vs-category gap.', 'emails':[
+     {'when':'Day 2','key':'d2','subject':"The shift is happening faster than you think",'cta':'See the Full Picture','dest':'/pricing/'},
+     {'when':'Day 5','key':'d5','subject':"What happens when AI starts recommending you",'cta':'Start Fixing Your Visibility','dest':'/pricing/'},
+     {'when':'Day 8','key':'d8','subject':"Your AI visibility won't fix itself",'cta':'See Plans & Pricing','dest':'/pricing/'}]}
+} %}
+
+<style>
+  .traffic-tabs { display:flex; gap:4px; border-bottom:2px solid var(--gray-200); margin-bottom:20px; }
+  .traffic-tab { background:none; border:none; padding:11px 20px; font-size:14px; font-weight:600; color:var(--gray-500); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; }
+  .traffic-tab:hover { color:var(--gray-800); }
+  .traffic-tab.active { color:var(--primary); border-bottom-color:var(--primary); }
+</style>
+
+<div class="card" style="margin-bottom:20px;">
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span class="badge badge-info" style="white-space:nowrap;">Immediate &middot; Report</span>
+    <div>
+      <div style="font-weight:600;">&ldquo;Is AI sending your customers to competitors?&rdquo;</div>
+      <div style="font-size:12px;color:var(--gray-500);">Sent to every lead the moment they finish the free check &rarr; /pricing/ + /book-demo/. Runs on an hourly WP-Cron; days 2 / 5 / 8 follow.</div>
+    </div>
+  </div>
+</div>
+
+<div class="traffic-tabs">
+  {% for key in ['agency','comparison','generic'] %}
+  <button type="button" class="traffic-tab {% if loop.first %}active{% endif %}" data-tab="{{ key }}">{{ SEQ[key].label }} <span style="color:var(--gray-400);font-weight:500;">({{ funnel[key].leads }})</span></button>
+  {% endfor %}
+</div>
+
+{% for key in ['agency','comparison','generic'] %}
+{% set s = SEQ[key] %}{% set f = funnel[key] %}
+<div class="traffic-panel" data-tab="{{ key }}" {% if not loop.first %}style="display:none;"{% endif %}>
+  <p style="color:var(--gray-500);font-size:13px;margin:-4px 0 18px;">{{ s.desc }}</p>
+
+  <div class="grid grid-4" style="margin-bottom:24px;">
+    <div class="stat-card"><div class="stat-label">Leads in sequence</div><div class="stat-value">{{ '{:,}'.format(f.leads) }}</div></div>
+    <div class="stat-card"><div class="stat-label">Fully nurtured (Day 8 sent)</div><div class="stat-value">{{ '{:,}'.format(f.d8) }}</div></div>
+    <div class="stat-card"><div class="stat-label">Converted</div><div class="stat-value" style="color:var(--success);">{{ '{:,}'.format(f.conv) }}</div></div>
+    <div class="stat-card"><div class="stat-label">Conversion Rate</div><div class="stat-value">{{ (100*f.conv/f.leads)|round(1) if f.leads else 0 }}%</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title" style="margin-bottom:14px;">Sequence &mdash; emails &amp; delivery</div>
+    <table class="table">
+      <thead><tr><th>When</th><th>Subject</th><th>CTA &rarr; Destination</th><th style="text-align:right;">Sent</th><th style="text-align:right;">Clicked</th><th style="text-align:right;">Scans</th><th style="text-align:right;">Leads</th></tr></thead>
+      <tbody>
+        <tr>
+          <td style="white-space:nowrap;"><span class="badge badge-info">Immediate</span></td>
+          <td style="color:var(--gray-800);font-weight:500;">Report &mdash; free-check results</td>
+          <td style="font-size:13px;color:var(--gray-500);">See Plans / Book a call &rarr; /pricing/ + /book-demo/</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">{{ '{:,}'.format(f.rpt) }}</td>
+          <td style="text-align:right;color:var(--gray-400);">&mdash;</td><td style="text-align:right;color:var(--gray-400);">&mdash;</td><td style="text-align:right;color:var(--gray-400);">&mdash;</td>
+        </tr>
+        {% for e in s.emails %}
+        <tr>
+          <td style="white-space:nowrap;color:var(--gray-600);font-weight:600;">{{ e.when }}</td>
+          <td style="color:var(--gray-800);font-weight:500;max-width:340px;">{{ e.subject }}</td>
+          <td style="font-size:13px;color:var(--gray-500);">{{ e.cta }} &rarr; {{ e.dest }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">{{ '{:,}'.format(f[e.key]) }}</td>
+          {% set nm = nur_map.get(key ~ '_' ~ e.key[1:]) %}
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if nm and nm.sessions %}color:var(--primary);font-weight:600;{% else %}color:var(--gray-400);{% endif %}">{{ nm.sessions if nm else '&mdash;'|safe }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if not nm %}color:var(--gray-400);{% endif %}">{{ nm.scans if nm else '&mdash;'|safe }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if nm and nm.leads %}color:var(--success);font-weight:700;{% elif not nm %}color:var(--gray-400);{% endif %}">{{ nm.leads if nm else '&mdash;'|safe }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p style="font-size:12px;color:var(--gray-400);margin:14px 0 0;">
+      &#9432; Opens aren&#39;t tracked &mdash; nurtures send via WordPress <code>wp_mail</code> (no open pixel). The <strong>Clicked / Scans / Leads</strong> columns come from GA4 (<code>utm_source=nurture</code>, matched by <code>utm_content</code>); a dash means no click-throughs recorded yet. Full trend under <a href="/marketing/traffic" style="color:var(--primary);">Traffic &rarr; Google Analytics</a>.
+    </p>
+  </div>
+</div>
+{% endfor %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.querySelectorAll('.traffic-tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      var tab = this.getAttribute('data-tab');
+      document.querySelectorAll('.traffic-tab').forEach(function (x) { x.classList.toggle('active', x === t); });
+      document.querySelectorAll('.traffic-panel').forEach(function (p) {
+        p.style.display = (p.getAttribute('data-tab') === tab) ? 'block' : 'none';
+      });
+    });
+  });
+</script>
+{% endblock %}

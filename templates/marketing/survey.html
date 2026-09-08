@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Measure — Survey{% endblock %}
+{% block page_title %}Measure{% endblock %}
+{% block content %}
+{% include "marketing/_measure_tabs.html" %}
+<style>
+  .sv-bar-wrap { background:var(--gray-100); border-radius:6px; height:22px; overflow:hidden; flex:1; }
+  .sv-bar { height:100%; background:var(--primary); }
+  .sv-row { display:flex; align-items:center; gap:12px; margin:0 0 8px; font-size:13px; }
+  .sv-row .sv-label { width:230px; color:var(--gray-600); }
+  .sv-row .sv-num { width:70px; text-align:right; font-variant-numeric:tabular-nums; color:var(--gray-500); }
+  .sv-xtab td, .sv-xtab th { text-align:center; font-variant-numeric:tabular-nums; }
+  .sv-xtab td.lbl, .sv-xtab th.lbl { text-align:left; }
+  .sv-open { border:1px solid var(--gray-200); border-radius:8px; padding:12px 14px; margin:0 0 10px; }
+  .sv-open .meta { font-size:11px; color:var(--gray-400); margin-bottom:4px; }
+</style>
+
+<div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:6px;">
+  <h1 style="margin:0;">Barrier Research Survey</h1>
+</div>
+<p style="color:var(--gray-500);margin:0 0 20px;">Why did email clickers not run the free check? Responses tagged by funnel <strong>epoch</strong> and list source.</p>
+
+{% if error %}
+  <div class="card" style="background:#FEF2F2;border-color:#FECACA;margin-bottom:20px;">
+    <p style="color:#991B1B;margin:0;"><strong>Query failed:</strong> {{ error }} &mdash; the 0 below may not be real, this is an error, not a confirmed empty result.</p>
+  </div>
+{% endif %}
+
+<div class="grid grid-3" style="margin-bottom:24px;">
+  <div class="stat-card"><div class="stat-label">Responses</div><div class="stat-value">{{ total }}</div></div>
+  <div class="stat-card"><div class="stat-label">Sent</div><div class="stat-value">{{ '{:,}'.format(sent) }}</div></div>
+  <div class="stat-card"><div class="stat-label">Response rate</div><div class="stat-value">{{ ((100.0*total/sent)|round(1)) if sent else 0 }}%</div></div>
+</div>
+
+{% if total == 0 %}
+  <div class="card"><p style="color:var(--gray-500);margin:0;">No responses yet. The survey emails go out next week (after NeverBounce verification). This dashboard fills in as people respond &mdash; <a href="https://citemetrix.com/survey/?epoch=3&campaign=432&source=test" target="_blank">preview the survey</a>.</p></div>
+{% else %}
+
+{% macro distblock(key, title) %}
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title" style="margin-bottom:12px;">{{ title }}</div>
+    {% set d = dist[key] %}
+    {% set tot = d.values()|sum %}
+    {% for code, lbl in labels[key] %}
+      {% set n = d[code] %}
+      <div class="sv-row">
+        <div class="sv-label">{{ lbl }}</div>
+        <div class="sv-bar-wrap"><div class="sv-bar" style="width:{{ (100.0*n/tot)|round(1) if tot else 0 }}%;{% if key=='q3_barrier' %}background:var(--danger);{% endif %}"></div></div>
+        <div class="sv-num">{{ n }} ({{ (100.0*n/tot)|round(0)|int if tot else 0 }}%)</div>
+      </div>
+    {% endfor %}
+  </div>
+{% endmacro %}
+
+<div class="grid grid-2">
+  <div>{{ distblock('q1_awareness', 'Q1 — Awareness of AI search') }}</div>
+  <div>{{ distblock('q2_relevance', 'Q2 — Relevance to their business') }}</div>
+</div>
+{{ distblock('q3_barrier', 'Q3 — The barrier (the key finding)') }}
+<div class="grid grid-2"><div>{{ distblock('q4_value', 'Q4 — Value of the offer') }}</div><div></div></div>
+
+<div class="card" style="margin:8px 0 16px;">
+  <div class="card-title" style="margin-bottom:12px;">Barrier by funnel epoch</div>
+  <div style="overflow-x:auto;"><table class="table sv-xtab">
+    <thead><tr><th class="lbl">Barrier</th>{% for e in epochs %}<th>Epoch {{ e }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for c in barrier_codes %}<tr><td class="lbl">{{ barrier_labels[c] }}</td>{% for e in epochs %}<td>{{ by_epoch[e][c] or '·' }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+
+{% if by_source %}
+<div class="card" style="margin:0 0 16px;">
+  <div class="card-title" style="margin-bottom:12px;">Barrier by list source</div>
+  <div style="overflow-x:auto;"><table class="table sv-xtab">
+    <thead><tr><th class="lbl">Barrier</th>{% for s in by_source.keys() %}<th>{{ s }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for c in barrier_codes %}<tr><td class="lbl">{{ barrier_labels[c] }}</td>{% for s in by_source.keys() %}<td>{{ by_source[s][c] or '·' }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+
+{% if by_batch %}
+<div class="card" style="margin:0 0 16px;">
+  <div class="card-title" style="margin-bottom:12px;">Responses by batch <span style="font-weight:400;color:var(--gray-400);font-size:12px;">&mdash; does the barrier shift as the warmup scales?</span></div>
+  <div style="overflow-x:auto;"><table class="table">
+    <thead><tr><th>Campaign</th><th>Epoch</th><th>Source</th><th style="text-align:right;">Responses</th><th>Top barrier</th></tr></thead>
+    <tbody>
+      {% for cid, bb in by_batch|dictsort %}
+      <tr><td>#{{ cid }}</td><td>{{ bb.epoch or '?' }}</td><td>{{ bb.source or '?' }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ bb.n }}</td>
+          <td>{{ barrier_labels.get(bb.top, bb.top or '&mdash;'|safe) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+{% if open_responses %}
+<div class="card">
+  <div class="card-title" style="margin-bottom:12px;">Open-ended (Q5) &mdash; {{ open_responses|length }} responses</div>
+  {% for o in open_responses %}
+    <div class="sv-open">
+      <div class="meta">Epoch {{ o.epoch or '?' }} &middot; {{ o.source or '?' }} &middot; campaign {{ o.campaign or '?' }} &middot; barrier: {{ barrier_labels.get(o.barrier, o.barrier or '?') }}{% if o.at %} &middot; {{ o.at }}{% endif %}</div>
+      <div>{{ o.text }}</div>
+      {% if o.other %}<div style="color:var(--gray-500);font-size:12px;margin-top:4px;">Other: {{ o.other }}</div>{% endif %}
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

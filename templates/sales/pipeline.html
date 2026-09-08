@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Pipeline{% endblock %}
+{% block page_title %}Pipeline{% endblock %}
+{% block content %}
+<style>
+.pl-board { display:grid; grid-template-columns:repeat(4, minmax(220px,1fr)); gap:12px; overflow-x:auto; align-items:start; }
+.pl-col { background:var(--gray-50); border:1px solid var(--gray-200); border-radius:10px; padding:10px; min-height:80px; }
+.pl-col-header { display:flex; justify-content:space-between; align-items:center; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--gray-600); padding:2px 4px 10px; }
+.pl-col-header a.n { font-variant-numeric:tabular-nums; background:var(--gray-200); color:var(--gray-700); border-radius:10px; padding:1px 8px; text-decoration:none; }
+.pl-col-header a.n:hover { background:var(--primary); color:#fff; }
+.pl-col.pl-won .pl-col-header { color:#166534; } .pl-col.pl-won .pl-col-header a.n { background:#dcfce7; color:#166534; }
+.pl-col.pl-lost .pl-col-header { color:#991b1b; } .pl-col.pl-lost .pl-col-header a.n { background:#fee2e2; color:#991b1b; }
+.pl-card { background:#fff; border:1px solid var(--gray-200); border-radius:8px; padding:10px 12px 10px 32px; margin-bottom:8px; font-size:13px; position:relative; }
+.pl-card .pl-check { position:absolute; top:12px; left:10px; }
+.pl-card .email { font-weight:600; color:var(--gray-800); word-break:break-all; margin-bottom:2px; }
+.pl-card .meta { color:var(--gray-500); font-size:12px; margin-bottom:6px; }
+.pl-card select { width:100%; padding:5px 6px; border:1px solid var(--gray-200); border-radius:6px; font-size:12px; color:var(--gray-700); }
+.pl-card .badges { margin-bottom:6px; }
+.pl-empty { color:var(--gray-400); font-size:12px; padding:8px 4px; line-height:1.5; }
+.pl-empty a { color:var(--primary); text-decoration:none; font-weight:500; }
+.pl-empty a:hover { text-decoration:underline; }
+.pl-bulk-bar { display:none; align-items:center; gap:10px; background:var(--gray-900); color:#fff; padding:10px 16px; border-radius:8px; margin-bottom:14px; font-size:13px; }
+.pl-bulk-bar.open { display:flex; }
+.pl-bulk-bar select { padding:6px 8px; border-radius:6px; border:none; font-size:13px; }
+.pl-bulk-bar button { padding:6px 12px; border-radius:6px; border:none; font-size:13px; cursor:pointer; }
+.pl-bulk-bar .pl-bulk-move { background:var(--primary); color:#fff; }
+.pl-bulk-bar .pl-bulk-clear { background:transparent; color:var(--gray-300); }
+</style>
+
+<p style="color:var(--gray-500); font-size:13px; margin-bottom:16px;">
+  Leads a human is actively working — engaged onward. New and contacted leads (marketing's half) live in
+  <a href="/marketing/leads" style="color:var(--primary);">Leads</a>.
+  <span style="color:var(--gray-400);">{{ total }} total (excluded leads not shown).</span>
+</p>
+
+<div class="pl-bulk-bar" id="pl-bulk-bar">
+  <span id="pl-bulk-count">0 selected</span>
+  <select id="pl-bulk-stage">
+    {% for opt in stages %}<option value="{{ opt }}">Move to {{ opt|capitalize }}</option>{% endfor %}
+  </select>
+  <button type="button" class="pl-bulk-move" onclick="plBulkMove()">Move</button>
+  <button type="button" class="pl-bulk-clear" onclick="plBulkClear()">Clear</button>
+</div>
+
+<div class="pl-board">
+  {% for s in stages %}
+  <div class="pl-col {% if s == 'won' %}pl-won{% elif s == 'lost' %}pl-lost{% endif %}">
+    <div class="pl-col-header"><span>{{ s|capitalize }}</span><a class="n" href="/marketing/leads?stage={{ s }}">{{ board[s]|length }}</a></div>
+    {% for l in board[s] %}
+      <div class="pl-card" id="pl-card-{{ l.id }}" onclick="openLeadDetail({{ l.id }})" style="cursor:pointer;">
+        <input type="checkbox" class="pl-check" data-id="{{ l.id }}" onclick="event.stopPropagation()" onchange="plUpdateBulkBar()">
+        {% if l.email %}
+          <div class="email">{{ l.email }}</div>
+          {% if l.name or l.company %}<div class="meta">{{ l.name or '' }}{% if l.company and l.name %} &middot; {{ l.company }}{% elif l.company %}{{ l.company }}{% endif %}</div>{% endif %}
+        {% elif l.name %}
+          <div class="email">{{ l.name }}</div>
+          {% if l.company %}<div class="meta">{{ l.company }}</div>{% endif %}
+        {% elif l.company %}
+          <div class="email">{{ l.company }}</div>
+        {% endif %}
+        <div class="badges">
+          {% if l.original_source == 'inbound' %}<span class="badge badge-info" style="font-size:10px;">Inbound</span>
+          {% elif l.original_source == 'direct' %}<span class="badge" style="background:var(--gray-100);color:var(--gray-600);font-size:10px;">Direct</span>
+          {% elif l.original_source == 'in_person' %}<span class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;">In-Person</span>
+          {% elif l.original_source == 'beta' %}<span class="badge" style="background:#ede9fe;color:#6d28d9;font-size:10px;">Beta</span>
+          {% elif l.original_source == 'chat' %}<span class="badge" style="background:#dcfce7;color:#166534;font-size:10px;">Chat</span>
+          {% else %}<span class="badge" style="background:var(--gray-100);color:var(--gray-600);font-size:10px;">{{ l.original_source|capitalize }}</span>{% endif %}
+          {% if l.suppressed_at %}<span class="badge badge-danger" style="font-size:10px;">Suppressed</span>{% endif %}
+          {% if l.dup_status == 'possible_dup' %}<span class="badge" style="background:#fef3c7;color:#92400e;font-size:10px;" title="Shares an email with another lead in this pool (cluster {{ l.person_cluster_id }})">Possible duplicate</span>{% endif %}
+        </div>
+        <div class="meta">{{ l.source or 'No source recorded' }} &middot; {{ l.created_at.strftime('%Y-%m-%d') if l.created_at else '' }}</div>
+        <select onchange="plSetStage({{ l.id }}, this.value)" onclick="event.stopPropagation()">
+          {% for opt in stages %}
+            <option value="{{ opt }}" {% if opt == s %}selected{% endif %}>{{ opt|capitalize }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    {% endfor %}
+    {% if not board[s] %}
+      <div class="pl-empty">
+        {% if s == 'engaged' %}
+          {% if contacted_count %}No one has replied yet. {{ contacted_count }} lead{{ 's' if contacted_count != 1 }} contacted and awaiting response &rarr; <a href="/marketing/leads?stage=contacted">view in Leads</a>
+          {% else %}No one has replied yet, and nothing is currently contacted either &mdash; <a href="/marketing/leads?stage=open">check the Leads queue</a>{% endif %}
+        {% elif s == 'qualified' %}
+          {% if board['engaged']|length %}Nothing qualified yet. {{ board['engaged']|length }} lead{{ 's' if board['engaged']|length != 1 }} in Engaged, just left of here.
+          {% else %}Nothing qualified yet.{% endif %}
+        {% elif s == 'won' %}No wins recorded yet.
+        {% elif s == 'lost' %}Nothing lost &mdash; good sign.
+        {% else %}No leads here.{% endif %}
+      </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+async function plSetStage(id, stage){
+  const card = document.getElementById('pl-card-' + id);
+  const fd = new FormData(); fd.append('stage', stage);
+  try {
+    const r = await fetch('/api/leads/' + id + '/set-stage', {method:'POST', body: fd});
+    if (!r.ok) { alert('Could not update stage.'); return; }
+    location.reload();
+  } catch(e) {
+    alert('Could not update stage.');
+  }
+}
+
+function plUpdateBulkBar(){
+  const checked = document.querySelectorAll('.pl-check:checked');
+  const bar = document.getElementById('pl-bulk-bar');
+  if (checked.length === 0) { bar.classList.remove('open'); return; }
+  bar.classList.add('open');
+  document.getElementById('pl-bulk-count').textContent = checked.length + ' selected';
+}
+function plBulkClear(){
+  document.querySelectorAll('.pl-check:checked').forEach(c => c.checked = false);
+  plUpdateBulkBar();
+}
+async function plBulkMove(){
+  const ids = Array.from(document.querySelectorAll('.pl-check:checked')).map(c => c.dataset.id);
+  if (!ids.length) return;
+  const stage = document.getElementById('pl-bulk-stage').value;
+  try {
+    await Promise.all(ids.map(id => {
+      const fd = new FormData(); fd.append('stage', stage);
+      return fetch('/api/leads/' + id + '/set-stage', {method:'POST', body: fd});
+    }));
+    location.reload();
+  } catch(e) {
+    alert('Could not move all selected leads.');
+  }
+}
+</script>
+{% endblock %}

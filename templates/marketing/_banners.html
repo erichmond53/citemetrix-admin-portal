@@ -1,0 +1,8 @@
+{# Explanatory alert banners — severity-tinted, internal-tool light theme. #}
+{% macro banner(severity, text, label='') -%}
+  {%- set palette = {'alert': ('#fef2f2', '#f4c9c9', '#8a1c1c'), 'warning': ('#fffbeb', '#f2e0a3', '#7a4f00'), 'info': ('#eff6ff', '#c3d9f7', '#1c437f')} -%}
+  {%- set bg, bd, fg = palette.get(severity, palette['info']) -%}
+  <div style="background:{{ bg }}; border:1px solid {{ bd }}; color:{{ fg }}; border-radius:7px; padding:10px 14px; margin-bottom:9px; font-size:13px; line-height:1.45;">
+    {%- if label %}<strong>{{ label }}:</strong> {% endif -%}{{ text }}
+  </div>
+{%- endmacro %}

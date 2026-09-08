@@ -1,0 +1,481 @@
+{% extends "base.html" %}
+{% block title %}Investors{% endblock %}
+{% block page_title %}Investors{% endblock %}
+{% block content %}
+<style>
+:root { --fit-hot:#16A34A; --fit-warm:#65A30D; --fit-possible:#CA8A04; --fit-cold:#9CA3AF; }
+.inv-subnav { display:flex; gap:0; border-bottom:2px solid var(--gray-200); margin-bottom:20px; }
+.inv-subnav a { padding:10px 20px; font-weight:500; color:var(--gray-500); text-decoration:none; border-bottom:2px solid transparent; margin-bottom:-2px; }
+.inv-subnav a.active { color:var(--primary); border-bottom-color:var(--primary); }
+.fit-strip { display:flex; gap:12px; margin-bottom:22px; flex-wrap:wrap; }
+.fit-stat { background:#fff; border:1px solid var(--gray-200); border-radius:10px; padding:14px 20px; min-width:96px; text-align:center; }
+.fit-stat .num { font-size:26px; font-weight:700; }
+.fit-stat .lbl { font-size:11px; color:var(--gray-500); text-transform:uppercase; margin-top:2px; }
+.fit-stat.hot .num{color:var(--fit-hot)} .fit-stat.warm .num{color:var(--fit-warm)} .fit-stat.possible .num{color:var(--fit-possible)} .fit-stat.cold .num{color:var(--fit-cold)}
+.fit-stat.contacted .num{color:#1D4ED8} .fit-stat.contacted.active-filter{border-color:#1D4ED8;background:#EFF6FF}
+.add-form { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px; margin-bottom:20px; }
+.add-form-row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+.add-form-row .fg { flex:1; min-width:180px; } .add-form-row label { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+.add-form-row input { width:100%; padding:10px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box; }
+.btn-p { background:var(--primary); color:#fff; border:none; padding:10px 18px; border-radius:8px; font-weight:500; cursor:pointer; white-space:nowrap; }
+.btn-p:hover{ background:var(--primary-dark) } .btn-p:disabled{ background:var(--gray-300); cursor:not-allowed }
+.btn-s { background:var(--gray-100); color:var(--gray-700); border:1px solid var(--gray-200); padding:10px 16px; border-radius:8px; font-weight:500; cursor:pointer; }
+.btn-s:hover{ background:var(--gray-200) }
+.research-status { margin-top:12px; padding:10px 14px; border-radius:8px; font-size:14px; display:none; }
+.research-status.loading{ display:block; background:#EFF6FF; color:#1E40AF } .research-status.success{ display:block; background:#F0FDF4; color:#166534 } .research-status.error{ display:block; background:#FEF2F2; color:#991B1B }
+.sugg-wrap { background:#FffBEB; border:1px solid #FDE68A; border-radius:12px; padding:16px; margin-bottom:20px; display:none; }
+.sugg-wrap h3 { margin:0 0 10px; font-size:14px; color:#92400E; }
+.sugg-chip { display:inline-flex; align-items:center; gap:8px; background:#fff; border:1px solid #FCD34D; border-radius:999px; padding:6px 12px; margin:4px; font-size:13px; }
+.sugg-chip button { background:var(--fit-hot); color:#fff; border:none; border-radius:999px; padding:3px 10px; font-size:12px; cursor:pointer; }
+.sugg-chip .src { color:var(--gray-500); font-size:11px; }
+.inv-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px,1fr)); gap:16px; }
+.inv-card { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px 18px 16px; cursor:pointer; position:relative; overflow:hidden; transition:box-shadow .15s, border-color .15s; }
+.inv-card:hover { border-color:var(--primary); box-shadow:0 4px 12px rgba(0,0,0,.08); }
+.inv-card .fitbar { position:absolute; top:0; left:0; right:0; height:4px; }
+.inv-card .score { position:absolute; top:16px; right:16px; width:46px; height:46px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:15px; }
+.inv-card h3 { margin:6px 60px 4px 0; font-size:17px; }
+.inv-card .hq { color:var(--gray-500); font-size:12px; margin-bottom:10px; }
+.inv-card .thesis { color:var(--gray-600); font-size:13px; line-height:1.45; max-height:56px; overflow:hidden; margin-bottom:10px; }
+.inv-card .meta { display:flex; gap:14px; font-size:12px; color:var(--gray-600); flex-wrap:wrap; }
+.inv-card .badge { display:inline-block; font-size:11px; font-weight:600; text-transform:uppercase; padding:2px 8px; border-radius:6px; }
+.inv-card .actions { position:absolute; bottom:12px; right:12px; display:flex; gap:6px; opacity:0; transition:opacity .15s; }
+.inv-card:hover .actions { opacity:1; }
+.inv-card .actions button { background:var(--gray-100); border:1px solid var(--gray-200); padding:5px 10px; border-radius:6px; font-size:12px; cursor:pointer; }
+.hot{--c:var(--fit-hot)} .warm{--c:var(--fit-warm)} .possible{--c:var(--fit-possible)} .cold{--c:var(--fit-cold)}
+.fitbar.hot,.fitbar.warm,.fitbar.possible,.fitbar.cold{ background:var(--c) }
+.score.hot,.score.warm,.score.possible,.score.cold{ background:color-mix(in srgb, var(--c) 15%, #fff); color:var(--c) }
+.badge.contacted { color:#1D4ED8; background:#DBEAFE; white-space:nowrap; }
+.empty { background:#fff; border:1px dashed var(--gray-300); border-radius:12px; padding:40px; text-align:center; color:var(--gray-500); }
+/* detail slide-over */
+.ov { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; z-index:60; }
+.ov.open{ display:block }
+.panel { position:fixed; top:0; right:0; bottom:0; width:min(560px,94vw); background:#fff; z-index:61; transform:translateX(100%); transition:transform .2s; overflow-y:auto; box-shadow:-4px 0 20px rgba(0,0,0,.1); }
+.panel.open{ transform:translateX(0) }
+.panel .ph { padding:20px 24px; border-bottom:1px solid var(--gray-200); position:sticky; top:0; background:#fff; display:flex; justify-content:space-between; align-items:flex-start; }
+.panel .pb { padding:20px 24px; }
+.panel h2 { margin:0 0 2px; font-size:20px; }
+.panel .sec { margin-bottom:18px; } .panel .sec h4 { font-size:12px; text-transform:uppercase; color:var(--gray-500); margin:0 0 6px; letter-spacing:.03em; }
+.panel .kv { font-size:14px; color:var(--gray-800); line-height:1.5; }
+.panel textarea { width:100%; box-sizing:border-box; border:1px solid var(--gray-200); border-radius:8px; padding:10px; font-size:14px; font-family:inherit; min-height:80px; }
+.pf-item { border-left:3px solid var(--gray-200); padding:2px 0 2px 10px; margin-bottom:8px; font-size:13px; }
+.close-x { background:none; border:none; font-size:22px; cursor:pointer; color:var(--gray-400); line-height:1; }
+.oc-status { display:inline-block; font-size:11px; font-weight:600; text-transform:uppercase; padding:3px 9px; border-radius:6px; }
+.oc-status.not_started{background:#F3F4F6;color:#6B7280} .oc-status.drafted{background:#EFF6FF;color:#1E40AF}
+.oc-status.approved{background:#FEF3C7;color:#92400E} .oc-status.sent{background:#E0E7FF;color:#3730A3}
+.oc-status.opened{background:#DBEAFE;color:#1E3A8A} .oc-status.replied{background:#D1FAE5;color:#065F46}
+.oc-status.meeting{background:#DCFCE7;color:#166534} .oc-status.passed{background:#FEE2E2;color:#991B1B}
+.oc-status.committed{background:#BBF7D0;color:#14532D} .oc-status.bounced{background:#FEE2E2;color:#991B1B}
+.oc-status.do_not_contact{background:#F3F4F6;color:#374151}
+.oc-subject { width:100%; box-sizing:border-box; border:1px solid var(--gray-200); border-radius:8px; padding:8px 10px; font-size:14px; font-family:inherit; margin-bottom:8px; }
+.oc-body { min-height:180px; }
+.oc-row { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+.oc-select { padding:8px 10px; border:1px solid var(--gray-200); border-radius:8px; font-size:13px; }
+.oc-events { margin-top:12px; font-size:12px; color:var(--gray-500); }
+.oc-events div { padding:3px 0; }
+.oc-err { background:#FEF2F2; color:#991B1B; padding:8px 12px; border-radius:8px; font-size:13px; margin-bottom:8px; }
+</style>
+
+{% if data.error %}<div class="research-status error" style="display:block;">Error loading investors: {{ data.error }}</div>{% endif %}
+
+<div class="fit-strip">
+    <div class="fit-stat"><div class="num">{{ data.stats.total }}</div><div class="lbl">Tracked</div></div>
+    <div class="fit-stat hot"><div class="num">{{ data.stats.hot }}</div><div class="lbl">Hot</div></div>
+    <div class="fit-stat warm"><div class="num">{{ data.stats.warm }}</div><div class="lbl">Warm</div></div>
+    <div class="fit-stat possible"><div class="num">{{ data.stats.possible }}</div><div class="lbl">Possible</div></div>
+    <div class="fit-stat cold"><div class="num">{{ data.stats.cold }}</div><div class="lbl">Cold</div></div>
+    <div class="fit-stat contacted"><div class="num">{{ data.stats.contacted }}</div><div class="lbl">Contacted</div></div>
+</div>
+
+<div class="add-form">
+    <div class="add-form-row">
+        <div class="fg"><label>Firm name</label><input id="f-firm" placeholder="e.g. Riverwood Capital"></div>
+        <div class="fg"><label>Website (optional)</label><input id="f-web" placeholder="e.g. riverwood.com"></div>
+        <button class="btn-p" id="btn-research" onclick="doResearch()">Research firm</button>
+        <button class="btn-s" id="btn-suggest" onclick="doSuggest()">Suggest from competitors</button>
+        <label class="btn-s" id="btn-batch" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;">&#128228; Batch from CSV<input type="file" id="f-csv" accept=".csv,text/csv" style="display:none;" onchange="doBatch(this)"></label>
+    </div>
+    <div style="font-size:12px;color:var(--gray-500);margin-top:4px;">CSV columns: firm name, website. Skips firms already researched; up to 100 per upload.</div>
+    <div class="research-status" id="rstatus"></div>
+</div>
+
+<div class="sugg-wrap" id="sugg"><h3>Investor leads from competitor funding</h3><div id="sugg-list"></div></div>
+
+{% if data.investors %}
+<div class="filter-bar" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+    <input type="text" id="f-search" placeholder="Search firm, thesis, sector, HQ…" style="flex:1;min-width:200px;padding:8px 12px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;">
+    <select id="f-fit" style="padding:8px 10px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;"><option value="">All fits</option><option value="hot">Hot</option><option value="warm">Warm</option><option value="possible">Possible</option><option value="cold">Cold</option></select>
+    <select id="f-sector" style="padding:8px 10px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;"><option value="">All sectors</option></select>
+    <select id="f-stage" style="padding:8px 10px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;"><option value="">All rounds</option></select>
+    <button type="button" id="f-clear" style="padding:8px 12px;border:1px solid var(--gray-200);border-radius:8px;font-size:13px;background:#fff;cursor:pointer;">Clear</button>
+    <span id="f-count" style="font-size:12px;color:var(--gray-500);margin-left:auto;"></span>
+</div>
+<div class="inv-grid" id="grid">
+    {% for inv in data.investors %}
+    {% set lc = inv.fit_label or 'cold' %}
+    <div class="inv-card" data-id="{{ inv.id }}"
+         data-fit="{{ lc }}"
+         data-sectors="{{ (inv.sectors|join(', '))|lower }}"
+         data-stage="{{ (inv.stage_focus or '')|lower }}"
+         data-contacted="{{ '1' if inv.contacted else '0' }}"
+         data-search="{{ (inv.firm_name ~ ' ' ~ (inv.thesis or '') ~ ' ' ~ (inv.stage_focus or '') ~ ' ' ~ (inv.check_size or '') ~ ' ' ~ (inv.sectors|join(' ')) ~ ' ' ~ (inv.hq or ''))|lower }}"
+         onclick="openDetail({{ inv.id }})">
+        <div class="fitbar {{ lc }}"></div>
+        <div class="score {{ lc }}">{{ inv.fit_score }}</div>
+        <h3>{{ inv.firm_name }}</h3>
+        <div class="hq">{{ inv.hq or '—' }} · <span class="badge {{ lc }}" style="color:var(--c);background:color-mix(in srgb,var(--c) 12%,#fff)">{{ lc }}</span>{% if inv.contacted %} · <span class="badge contacted" title="Marked contacted{{ ' ' + inv.contacted_at if inv.contacted_at else '' }}">&#9993; Contacted{% if inv.contacted_at %} {{ inv.contacted_at }}{% endif %}</span>{% endif %}</div>
+        <div class="thesis">{{ inv.thesis or inv.fit_rationale or 'No thesis captured yet.' }}</div>
+        <div class="meta">
+            {% if inv.stage_focus %}<span>&#127919; {{ inv.stage_focus }}</span>{% endif %}
+            {% if inv.check_size %}<span>&#128176; {{ inv.check_size }}</span>{% endif %}
+            {% if inv.sectors %}<span>&#127991;&#65039; {{ inv.sectors|join(', ') }}</span>{% endif %}
+            {% if inv.portfolio %}<span>&#128188; {{ inv.portfolio|length }} portfolio</span>{% endif %}
+        </div>
+        <div class="actions" onclick="event.stopPropagation()">
+            <button onclick="rescan({{ inv.id }}, this)">Rescan</button>
+            <button onclick="archive({{ inv.id }})">Archive</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty" id="grid">No investors researched yet. Enter a firm above, or click <b>Suggest from competitors</b> to pull VC leads from your competitor funding data.</div>
+{% endif %}
+
+<div class="ov" id="ov" onclick="closeDetail()"></div>
+<div class="panel" id="panel"><div id="panel-content"></div></div>
+
+<script>
+// ── Investor filters: fit / sector / round / free-text search ──────────────
+(function(){
+    var cards = Array.prototype.slice.call(document.querySelectorAll('.inv-card'));
+    if (!cards.length) return;
+    var fSearch=document.getElementById('f-search'), fFit=document.getElementById('f-fit'),
+        fSector=document.getElementById('f-sector'), fStage=document.getElementById('f-stage'),
+        fClear=document.getElementById('f-clear'), fCount=document.getElementById('f-count');
+    var contactedOnly=false;
+    var titleCase=function(s){ return s.replace(/\b\w/g, function(m){ return m.toUpperCase(); }); };
+    var sectors={}, stages={};
+    cards.forEach(function(c){
+        (c.getAttribute('data-sectors')||'').split(',').forEach(function(s){ s=s.trim(); if(s) sectors[s]=1; });
+        var st=(c.getAttribute('data-stage')||'').trim(); if(st) stages[st]=1;
+    });
+    Object.keys(sectors).sort().forEach(function(s){ var o=document.createElement('option'); o.value=s; o.textContent=titleCase(s); fSector.appendChild(o); });
+    Object.keys(stages).sort().forEach(function(s){ var o=document.createElement('option'); o.value=s; o.textContent=titleCase(s); fStage.appendChild(o); });
+    function apply(){
+        var q=(fSearch.value||'').toLowerCase().trim(), fit=fFit.value, sec=fSector.value, stg=fStage.value, shown=0;
+        cards.forEach(function(c){
+            var ok=true;
+            if(q && (c.getAttribute('data-search')||'').indexOf(q)===-1) ok=false;
+            if(ok && fit && c.getAttribute('data-fit')!==fit) ok=false;
+            if(ok && sec && (c.getAttribute('data-sectors')||'').split(',').map(function(x){return x.trim();}).indexOf(sec)===-1) ok=false;
+            if(ok && stg && (c.getAttribute('data-stage')||'')!==stg) ok=false;
+            if(ok && contactedOnly && c.getAttribute('data-contacted')!=='1') ok=false;
+            c.style.display = ok ? '' : 'none';
+            if(ok) shown++;
+        });
+        if(fCount) fCount.textContent = shown + ' of ' + cards.length + ' firms';
+    }
+    [fSearch,fFit,fSector,fStage].forEach(function(el){ if(el){ el.addEventListener('input',apply); el.addEventListener('change',apply); } });
+    if(fClear) fClear.addEventListener('click', function(){ fSearch.value=''; fFit.value=''; fSector.value=''; fStage.value=''; contactedOnly=false; document.querySelectorAll('.fit-stat.contacted').forEach(function(t){t.classList.remove('active-filter');}); apply(); });
+    document.querySelectorAll('.fit-stat.contacted').forEach(function(tile){
+        tile.style.cursor='pointer'; tile.title='Filter to contacted only';
+        tile.addEventListener('click', function(){ contactedOnly=!contactedOnly; tile.classList.toggle('active-filter', contactedOnly); apply(); });
+    });
+    document.querySelectorAll('.fit-stat').forEach(function(tile){
+        var cls=(tile.className.replace('fit-stat','').trim()).split(' ')[0];
+        if(['hot','warm','possible','cold'].indexOf(cls)!==-1){
+            tile.style.cursor='pointer'; tile.title='Filter by '+cls;
+            tile.addEventListener('click', function(){ fFit.value=(fFit.value===cls?'':cls); apply(); });
+        }
+    });
+    apply();
+})();
+</script>
+<script>
+const RS = document.getElementById('rstatus');
+function setStatus(cls, msg){ RS.className = 'research-status ' + cls; RS.textContent = msg; }
+function clearStatus(){ RS.className = 'research-status'; RS.textContent = ''; }
+
+async function pollJob(jobId, onDone){
+    try {
+        const r = await fetch('/api/investors/job/' + jobId);
+        const j = await r.json();
+        if (j.status === 'done'){ onDone(null, j); return; }
+        if (j.status === 'error'){ onDone(j.error || 'Job failed', null); return; }
+        setStatus('loading', j.phase || 'Working...');
+        setTimeout(() => pollJob(jobId, onDone), 2000);
+    } catch(e){ onDone('Lost connection to job.', null); }
+}
+
+async function doResearch(){
+    const firm = document.getElementById('f-firm').value.trim();
+    const web = document.getElementById('f-web').value.trim();
+    if (!firm && !web){ setStatus('error', 'Enter a firm name or website.'); return; }
+    const btn = document.getElementById('btn-research'); btn.disabled = true;
+    setStatus('loading', 'Queued...');
+    try {
+        const r = await fetch('/api/investors/research', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({firm_name:firm, website:web})});
+        const j = await r.json();
+        if (!r.ok){ setStatus('error', j.error || 'Failed to start.'); btn.disabled=false; return; }
+        pollJob(j.job_id, (err) => {
+            btn.disabled = false;
+            if (err){ setStatus('error', err); return; }
+            setStatus('success', 'Done — refreshing.'); setTimeout(() => location.reload(), 700);
+        });
+    } catch(e){ setStatus('error', 'Request failed.'); btn.disabled=false; }
+}
+
+async function doBatch(input){
+    const file = input.files && input.files[0];
+    if (!file){ return; }
+    const btn = document.getElementById('btn-batch');
+    btn.style.opacity = 0.5; btn.style.pointerEvents = 'none';
+    setStatus('loading', 'Uploading CSV...');
+    try {
+        const fd = new FormData(); fd.append('file', file);
+        const r = await fetch('/api/investors/batch', {method:'POST', body: fd});
+        const j = await r.json();
+        input.value = '';
+        if (!r.ok){ setStatus('error', j.error || 'Batch failed to start.'); btn.style.opacity=1; btn.style.pointerEvents='auto'; return; }
+        setStatus('loading', 'Queued ' + j.total + ' firm' + (j.total===1?'':'s') + (j.capped?' (capped at 100)':'') + '...');
+        pollBatch(j.batch_id, btn);
+    } catch(e){ setStatus('error', 'Upload failed.'); input.value=''; btn.style.opacity=1; btn.style.pointerEvents='auto'; }
+}
+
+async function pollBatch(batchId, btn){
+    try {
+        const r = await fetch('/api/investors/batch/' + batchId);
+        const b = await r.json();
+        if (b.error){ setStatus('error', b.error); btn.style.opacity=1; btn.style.pointerEvents='auto'; return; }
+        const counts = 'done ' + (b.done||0) + ' · skipped ' + (b.skipped||0) + ' · failed ' + (b.failed||0) + ' of ' + (b.total||0);
+        if (b.status === 'done'){
+            setStatus('success', (b.phase || 'Complete') + ' — refreshing.');
+            setTimeout(() => location.reload(), 1200); return;
+        }
+        if (b.status === 'error'){ setStatus('error', b.error || b.phase || 'Batch failed.'); btn.style.opacity=1; btn.style.pointerEvents='auto'; return; }
+        setStatus('loading', (b.phase || 'Working') + '  (' + counts + ')');
+        setTimeout(() => pollBatch(batchId, btn), 3000);
+    } catch(e){ setTimeout(() => pollBatch(batchId, btn), 4000); }
+}
+
+async function doSuggest(){
+    const btn = document.getElementById('btn-suggest'); btn.disabled = true;
+    setStatus('loading', 'Scanning competitor funding data...');
+    try {
+        const r = await fetch('/api/investors/suggest', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+        const j = await r.json();
+        if (!r.ok){ setStatus('error', j.error || 'Failed.'); btn.disabled=false; return; }
+        pollJob(j.job_id, (err, job) => {
+            btn.disabled = false;
+            if (err){ setStatus('error', err); return; }
+            clearStatus();
+            let res = {}; try { res = JSON.parse(job.result_json || '{}'); } catch(e){}
+            renderSuggestions(res.suggestions || []);
+        });
+    } catch(e){ setStatus('error', 'Request failed.'); btn.disabled=false; }
+}
+
+function renderSuggestions(list){
+    const wrap = document.getElementById('sugg'), el = document.getElementById('sugg-list');
+    if (!list.length){ el.innerHTML = '<span style="color:#92400E;font-size:13px;">No new investor firms found in competitor data.</span>'; wrap.style.display='block'; return; }
+    el.innerHTML = list.map(s => {
+        const src = (s.sources || []).slice(0,3).join(', ');
+        const fn = (s.firm_name||'').replace(/"/g,'&quot;');
+        return `<span class="sugg-chip"><b>${fn}</b>${src?` <span class="src">via ${src}</span>`:''}<button onclick="researchNamed('${fn.replace(/'/g,"\\'")}')">Research</button></span>`;
+    }).join('');
+    wrap.style.display = 'block';
+}
+function researchNamed(firm){ document.getElementById('f-firm').value = firm; document.getElementById('f-web').value=''; doResearch(); window.scrollTo({top:0, behavior:'smooth'}); }
+
+async function rescan(id, btn){ btn.disabled = true; btn.textContent='...'; setStatus('loading','Rescanning...');
+    const r = await fetch('/api/investors/rescan/'+id, {method:'POST'}); const j = await r.json();
+    if (!r.ok){ setStatus('error', j.error||'Failed'); btn.disabled=false; btn.textContent='Rescan'; return; }
+    pollJob(j.job_id, (err)=>{ if(err){setStatus('error',err); btn.disabled=false; btn.textContent='Rescan'; return;} setStatus('success','Updated — refreshing.'); setTimeout(()=>location.reload(),700); });
+}
+async function archive(id){ if(!confirm('Archive this investor?')) return;
+    const r = await fetch('/api/investors/'+id+'/delete', {method:'POST'});
+    if (r.ok) location.reload(); else setStatus('error','Archive failed.');
+}
+
+const PANEL = document.getElementById('panel'), OV = document.getElementById('ov');
+async function openDetail(id){
+    OV.classList.add('open'); PANEL.classList.add('open');
+    document.getElementById('panel-content').innerHTML = '<div class="pb">Loading…</div>';
+    try {
+        const r = await fetch('/api/investors/'+id); const inv = await r.json();
+        if (inv.error){ document.getElementById('panel-content').innerHTML = '<div class="pb">Error: '+inv.error+'</div>'; return; }
+        renderDetail(inv);
+    } catch(e){ document.getElementById('panel-content').innerHTML = '<div class="pb">Failed to load.</div>'; }
+}
+function closeDetail(){ OV.classList.remove('open'); PANEL.classList.remove('open'); }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderDetail(inv){
+    const lc = inv.fit_label || 'cold';
+    const contact = inv.contact_json || {};
+    const portfolio = inv.portfolio_json || [];
+    const partners = inv.key_partners || [];
+    const cbits = [];
+    if (contact.pitch_url) cbits.push(`<a href="${esc(contact.pitch_url)}" target="_blank">Pitch page</a>`);
+    if (contact.email) cbits.push(`<a href="mailto:${esc(contact.email)}">${esc(contact.email)}</a>`);
+    if (contact.linkedin) cbits.push(`<a href="${esc(contact.linkedin)}" target="_blank">LinkedIn</a>`);
+    document.getElementById('panel-content').innerHTML = `
+        <div class="ph">
+            <div><h2>${esc(inv.firm_name)}</h2><div style="color:var(--gray-500);font-size:13px;">${esc(inv.hq||'')} ${inv.website?'· <a href="'+((inv.website.startsWith('http')?'':'https://')+esc(inv.website))+'" target="_blank">'+esc(inv.website)+'</a>':''}</div></div>
+            <button class="close-x" onclick="closeDetail()">&times;</button>
+        </div>
+        <div class="pb">
+            <div class="sec"><span class="score ${lc}" style="position:static;display:inline-flex;width:40px;height:40px;vertical-align:middle;">${inv.fit_score}</span>
+              <span class="badge ${lc}" style="color:var(--c);background:color-mix(in srgb,var(--c) 12%,#fff);vertical-align:middle;margin-left:8px;">${lc} fit</span></div>
+            ${inv.fit_rationale?`<div class="sec"><h4>Why this fit</h4><div class="kv">${esc(inv.fit_rationale)}</div></div>`:''}
+            ${inv.thesis?`<div class="sec"><h4>Thesis</h4><div class="kv">${esc(inv.thesis)}</div></div>`:''}
+            <div class="sec"><h4>Focus</h4><div class="kv">Stage: ${esc(inv.stage_focus||'—')} · Check: ${esc(inv.check_size||'—')}</div></div>
+            ${partners.length?`<div class="sec"><h4>Key partners</h4><div class="kv">${partners.map(esc).join(' · ')}</div></div>`:''}
+            ${portfolio.length?`<div class="sec"><h4>Relevant portfolio</h4>${portfolio.map(p=>`<div class="pf-item"><b>${esc(p.company||'')}</b> — ${esc(p.why||'')}</div>`).join('')}</div>`:''}
+            ${cbits.length?`<div class="sec"><h4>Contact info</h4><div class="kv">${cbits.join(' · ')}${contact.notes?'<br><span style="color:var(--gray-500)">'+esc(contact.notes)+'</span>':''}</div></div>`:''}
+            <div class="sec"><h4>Outreach email</h4><div id="oc-wrap" data-inv-id="${inv.id}"><div class="kv" style="color:var(--gray-500);">Loading…</div></div></div>
+            <div class="sec"><h4>Notes</h4><textarea id="d-notes">${esc(inv.notes||'')}</textarea>
+              <label style="display:block;margin-top:10px;font-size:14px;"><input type="checkbox" id="d-contacted" ${inv.contacted?'checked':''}> Contacted</label>
+              <button class="btn-p" style="margin-top:12px;" onclick="saveDetail(${inv.id})">Save</button>
+              <span id="d-saved" style="margin-left:10px;color:var(--fit-hot);font-size:13px;display:none;">Saved</span></div>
+            <div class="sec" style="color:var(--gray-400);font-size:12px;">Researched: ${esc(inv.researched_at||'—')}</div>
+        </div>`;
+    loadOutreach(inv.id);
+}
+
+const OC_STATUSES = ['not_started','drafted','approved','sent','opened','replied','meeting','passed','committed','bounced','do_not_contact'];
+const OC_CHANNELS = ['email','pitch_page','linkedin','warm_intro'];
+
+async function loadOutreach(id){
+    const wrap = document.getElementById('oc-wrap');
+    if (!wrap) return;
+    try {
+        const r = await fetch('/api/investors/'+id+'/outreach');
+        const j = await r.json();
+        if (j.error){ wrap.innerHTML = '<div class="oc-err">'+esc(j.error)+'</div>'; return; }
+        renderOutreach(id, j.thread, j.messages||[], j.events||[]);
+    } catch(e){ wrap.innerHTML = '<div class="oc-err">Failed to load outreach.</div>'; }
+}
+
+function renderOutreach(invId, thread, messages, events){
+    const wrap = document.getElementById('oc-wrap');
+    if (!thread){
+        wrap.innerHTML = `<button class="btn-p" onclick="draftOutreach(${invId})">Draft outreach email</button>
+            <div id="oc-draft-status" class="kv" style="margin-top:8px;"></div>`;
+        return;
+    }
+    const latest = messages[0] || null;
+    const statusOpts = OC_STATUSES.map(s => `<option value="${s}" ${thread.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('');
+    const channelOpts = OC_CHANNELS.map(c => `<option value="${c}" ${thread.channel===c?'selected':''}>${c.replace(/_/g,' ')}</option>`).join('');
+    const eventsHtml = events.slice(0,8).map(e => `<div>${esc(e.occurred_at)} — ${esc(e.event_type.replace(/_/g,' '))}${e.detail?': '+esc(e.detail):''}</div>`).join('');
+
+    let msgHtml = '';
+    if (latest){
+        const editable = latest.status === 'draft';
+        msgHtml = `
+            <input type="text" id="oc-subject" class="oc-subject" value="${esc(latest.subject||'')}" ${editable?'':'readonly'}>
+            <textarea id="oc-body" class="oc-body" ${editable?'':'readonly'}>${esc(latest.body||'')}</textarea>
+            <div class="oc-row">
+                <span class="oc-status ${thread.status}">${thread.status.replace(/_/g,' ')}</span>
+                <span style="color:var(--gray-500);font-size:12px;">message: ${latest.status} · channel: ${esc(thread.channel)}</span>
+            </div>
+            <div class="oc-row">
+                ${editable ? `<button class="btn-s" onclick="saveMessageEdits(${latest.id})">Save edits</button>
+                              <button class="btn-p" onclick="approveMessage(${latest.id}, ${invId})">Approve</button>` : ''}
+                ${latest.status==='approved' && thread.channel==='email' && thread.target_email ? `<button class="btn-p" style="background:#166534;" onclick="sendViaGmail(${latest.id}, ${invId})">Send now (via Gmail)</button>
+                <button class="btn-p" style="background:#374151;" onclick="sendViaSes(${latest.id}, ${invId})">Send now (via SES)</button>` : ''}
+                ${latest.status==='approved' ? `<button class="btn-s" onclick="markSent(${latest.id}, ${invId})">Mark sent (I sent it manually)</button>` : ''}
+                ${thread.status==='sent' || thread.status==='opened' ? `<span style="color:var(--gray-500);font-size:12px;">Sent ${esc(latest.sent_at||'')}</span>` : ''}
+                <button class="btn-s" onclick="draftOutreach(${invId})">Regenerate draft</button>
+            </div>
+            <div class="oc-row" style="font-size:12px;color:var(--gray-500);">
+                ${latest.status==='approved' && thread.channel==='email' ? '📎 Deck + Prospectus (v6.0 PDFs) will be attached automatically on Send.' : ''}
+            </div>
+            <div class="oc-row">
+                <label style="font-size:12px;color:var(--gray-500);">Update status:</label>
+                <select class="oc-select" id="oc-status-select">${statusOpts}</select>
+                <button class="btn-s" onclick="updateThreadStatus(${thread.id}, ${invId})">Update</button>
+            </div>
+            <div class="oc-row">
+                <label style="font-size:12px;color:var(--gray-500);">Channel (auto-picked from research — override if wrong):</label>
+                <select class="oc-select" id="oc-channel-select">${channelOpts}</select>
+                <button class="btn-s" onclick="updateThreadChannel(${thread.id}, ${invId})">Update</button>
+            </div>`;
+    }
+    wrap.innerHTML = msgHtml + (eventsHtml ? `<div class="oc-events">${eventsHtml}</div>` : '') +
+        `<div id="oc-draft-status" class="kv" style="margin-top:8px;"></div>`;
+}
+
+async function draftOutreach(invId){
+    const statusEl = () => document.getElementById('oc-draft-status');
+    if (statusEl()) statusEl().textContent = 'Drafting with Claude…';
+    try {
+        const r = await fetch('/api/investors/'+invId+'/outreach/draft', {method:'POST'});
+        const j = await r.json();
+        if (!r.ok){ if(statusEl()) statusEl().innerHTML = '<span style="color:#991B1B;">'+esc(j.error||'Draft failed.')+'</span>'; return; }
+        loadOutreach(invId);
+    } catch(e){ if(statusEl()) statusEl().innerHTML = '<span style="color:#991B1B;">Draft request failed.</span>'; }
+}
+
+async function saveMessageEdits(messageId){
+    const subject = document.getElementById('oc-subject').value;
+    const body = document.getElementById('oc-body').value;
+    await fetch('/api/outreach/message/'+messageId+'/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({subject, body})});
+}
+
+async function approveMessage(messageId, invId){
+    await saveMessageEdits(messageId);
+    const r = await fetch('/api/outreach/message/'+messageId+'/approve', {method:'POST'});
+    if (r.ok) loadOutreach(invId);
+}
+
+async function markSent(messageId, invId){
+    if (!confirm('Mark this outreach as sent? This also flips "Contacted" for this firm.')) return;
+    const r = await fetch('/api/outreach/message/'+messageId+'/mark-sent', {method:'POST'});
+    if (r.ok) { loadOutreach(invId); openDetail(invId); }
+}
+
+async function sendViaSes(messageId, invId){
+    if (!confirm('Send this email now via SES? This actually sends it to the investor and cannot be undone.')) return;
+    const statusEl = document.getElementById('oc-draft-status');
+    if (statusEl) statusEl.textContent = 'Sending…';
+    try {
+        const r = await fetch('/api/outreach/message/'+messageId+'/send-ses', {method:'POST'});
+        const j = await r.json();
+        if (!r.ok){ if(statusEl) statusEl.innerHTML = '<span style="color:#991B1B;">'+esc(j.error||'Send failed.')+'</span>'; return; }
+        loadOutreach(invId); openDetail(invId);
+    } catch(e){ if(statusEl) statusEl.innerHTML = '<span style="color:#991B1B;">Send request failed.</span>'; }
+}
+
+async function sendViaGmail(messageId, invId){
+    if (!confirm('Send this email now via Gmail (eric@citemetrix.com)? This actually sends it to the investor and cannot be undone.')) return;
+    const statusEl = document.getElementById('oc-draft-status');
+    if (statusEl) statusEl.textContent = 'Sending…';
+    try {
+        const r = await fetch('/api/outreach/message/'+messageId+'/send-gmail', {method:'POST'});
+        const j = await r.json();
+        if (!r.ok){ if(statusEl) statusEl.innerHTML = '<span style="color:#991B1B;">'+esc(j.error||'Send failed.')+'</span>'; return; }
+        loadOutreach(invId); openDetail(invId);
+    } catch(e){ if(statusEl) statusEl.innerHTML = '<span style="color:#991B1B;">Send request failed.</span>'; }
+}
+
+async function updateThreadStatus(threadId, invId){
+    const status = document.getElementById('oc-status-select').value;
+    const r = await fetch('/api/outreach/thread/'+threadId+'/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status})});
+    if (r.ok) loadOutreach(invId);
+}
+
+async function updateThreadChannel(threadId, invId){
+    const channel = document.getElementById('oc-channel-select').value;
+    const r = await fetch('/api/outreach/thread/'+threadId+'/channel', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({channel})});
+    if (r.ok) loadOutreach(invId);
+}
+
+async function saveDetail(id){
+    const notes = document.getElementById('d-notes').value;
+    const contacted = document.getElementById('d-contacted').checked;
+    const r = await fetch('/api/investors/'+id+'/update', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({notes, contacted})});
+    if (r.ok){ const s=document.getElementById('d-saved'); s.style.display='inline'; setTimeout(()=>s.style.display='none', 1500); }
+}
+</script>
+{% endblock %}

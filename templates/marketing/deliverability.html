@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}Measure — Deliverability{% endblock %}
+{% block page_title %}Measure{% endblock %}
+{% block topbar_actions %}
+  <div style="display:flex;gap:8px;">
+    <form method="POST" action="/marketing/deliverability/refresh" style="margin:0;">
+      <button type="submit" class="btn btn-primary">&#8635; Refresh SES</button>
+    </form>
+    <form method="POST" action="/marketing/deliverability/sendy-refresh" style="margin:0;">
+      <button type="submit" class="btn btn-primary" title="Pull the latest Sendy campaign stats from the send server and rebuild campaign reports (~30&ndash;60s).">&#8635; Refresh Sendy</button>
+    </form>
+  </div>
+{# ══════════════ BLACKLISTS ══════════════ #}
+<div class="traffic-panel" data-tab="blacklist" style="display:none;">
+<div class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+    <div class="card-title">Blacklist / DNSBL monitor</div>
+    <form method="post" action="{{ url_for('marketing_deliverability_blacklist_refresh') }}" style="margin:0;">
+      <button class="badge" type="submit" style="cursor:pointer;border:0;">Refresh Blacklists</button>
+    </form>
+  </div>
+  <p style="color:var(--gray-400);font-size:12px;margin:0 0 14px;">
+    {% if blacklist %}Checked {{ blacklist.generated }}. {% endif %}Runs daily.
+    {% if blacklist and not blacklist.dqs_enabled %}<br><span style="color:var(--warning);">Spamhaus needs a free Data Query Service key (set SPAMHAUS_DQS_KEY) to answer from AWS &mdash; until then Spamhaus rows show &ldquo;needs key&rdquo;. Verify Spamhaus directly at spamhaus.org/lookup meanwhile.</span>{% endif %}
+  </p>
+  {% if blacklist %}
+    {% if blacklist.any_listed %}
+    <div style="background:#fef2f2;border:1px solid var(--danger);border-radius:8px;padding:12px;margin-bottom:14px;color:#991b1b;font-weight:700;">
+      &#9888; {{ blacklist.listed_count }} active listing(s) &mdash; DO NOT resume sends until cleared.
+    </div>
+    {% else %}
+    <div style="background:#f0fdf4;border:1px solid var(--success);border-radius:8px;padding:12px;margin-bottom:14px;color:#166534;font-weight:600;">
+      No active listings on the lists that responded.{% if blacklist.any_unavailable %} Some checks are unavailable (see below).{% endif %}
+    </div>
+    {% endif %}
+    <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr><th>Target</th><th>Type</th><th>List</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for t in blacklist.targets %}{% for l in t.lists %}
+        <tr>
+          <td>{{ t.target }}</td>
+          <td style="color:var(--gray-500);">{{ t.type }}</td>
+          <td>{{ l.list }}</td>
+          <td style="font-weight:600;color:{{ 'var(--danger)' if l.status=='listed' else ('var(--gray-400)' if l.status in ['unavailable','error'] else 'var(--success)') }};">
+            {% if l.status=='listed' %}LISTED ({{ l.code }}){% elif l.status=='unavailable' %}needs key{% elif l.status=='error' %}error{% else %}clean{% endif %}
+          </td>
+        </tr>
+      {% endfor %}{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  {% else %}
+    <p style="color:var(--gray-500);">No blacklist snapshot yet. Click <strong>Refresh Blacklists</strong>.</p>
+  {% endif %}
+</div>
+</div>
+
+{% endblock %}
+{% block content %}
+{% include "marketing/_measure_tabs.html" %}
+{% import 'marketing/_banners.html' as banners %}
+{% import 'marketing/_charts.html' as charts %}
+{% if anomalies %}<div style="margin-bottom:16px;">{% for a in anomalies %}{{ banners.banner(a.severity, a.text) }}{% endfor %}</div>{% endif %}
+{% if read_error %}<div style="margin-bottom:16px;">{{ banners.banner('alert', read_error, 'SES data unavailable') }}</div>{% endif %}
+{% if stale_hours is not none and stale_hours > 30 %}
+  <div style="margin-bottom:16px;">{{ banners.banner('warning', 'Last successful SES refresh was ' ~ (stale_hours / 24)|round(1) ~ ' days ago (' ~ generated|replace('T',' ') ~ '). The daily job runs once a day, so this page can silently go stale if it stops running — check reports/deliverability/cron.log if this doesn\'t clear after clicking Refresh SES.', 'Stale data') }}</div>
+{% endif %}
+
+<style>
+  .traffic-tabs { display:flex; gap:4px; border-bottom:2px solid var(--gray-200); margin-bottom:20px; }
+  .traffic-tab { background:none; border:none; padding:11px 20px; font-size:14px; font-weight:600; color:var(--gray-500); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; }
+  .traffic-tab:hover { color:var(--gray-800); }
+  .traffic-tab.active { color:var(--primary); border-bottom-color:var(--primary); }
+</style>
+
+<div style="display:flex;align-items:flex-end;justify-content:space-between;">
+  <div class="traffic-tabs">
+    <button type="button" class="traffic-tab active" data-tab="ses">Amazon SES</button>
+    <button type="button" class="traffic-tab" data-tab="sendy">Sendy Campaigns</button>
+    <button type="button" class="traffic-tab" data-tab="blacklist">Blacklists</button>
+  </div>
+  {% if generated %}<p style="color:{{ 'var(--danger)' if (stale_hours is not none and stale_hours > 30) else 'var(--gray-400)' }};font-size:12px;margin:0 0 12px;{{ 'font-weight:600;' if (stale_hours is not none and stale_hours > 30) }}">SES updated {{ generated|replace('T',' ') }}{% if stale_hours is not none %} ({{ stale_hours }}h ago){% endif %}</p>{% endif %}
+</div>
+
+{# ══════════════ AMAZON SES ══════════════ #}
+<div class="traffic-panel" data-tab="ses">
+{% if ses and ses.window %}
+  {% set br = ses.window.bounce_rate %}
+  {% set cr = ses.window.complaint_rate %}
+  <div class="grid grid-4" style="margin-bottom:24px;">
+    <div class="stat-card">
+      <div class="stat-label">Account Status</div>
+      <div style="margin-top:6px;"><span class="badge {{ 'badge-success' if ses.enforcement_status == 'HEALTHY' else 'badge-danger' }}">{{ ses.enforcement_status or 'UNKNOWN' }}</span></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Bounce Rate <span style="color:var(--gray-400);">(~14d)</span></div>
+      <div class="stat-value" style="color:{{ 'var(--success)' if br < 2 else ('var(--warning)' if br <= 5 else 'var(--danger)') }};">{{ br }}%</div>
+      <div style="font-size:11px;color:var(--gray-400);">green &lt;2% &middot; red &gt;5%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Complaint Rate <span style="color:var(--gray-400);">(~14d)</span></div>
+      <div class="stat-value" style="color:{{ 'var(--success)' if cr < 0.05 else ('var(--warning)' if cr <= 0.1 else 'var(--danger)') }};">{{ cr }}%</div>
+      <div style="font-size:11px;color:var(--gray-400);">green &lt;0.05% &middot; red &gt;0.1%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Suppression List</div>
+      <div class="stat-value">{{ '{:,}'.format(ses.suppressed) if ses.suppressed is not none else '&mdash;'|safe }}</div>
+      {% if drip_suppressed_count %}<div style="font-size:11px;color:var(--gray-400);">{{ drip_suppressed_count }} drip enrollment{{ 's' if drip_suppressed_count != 1 else '' }} blocked from sending against it</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card">
+      <div class="card-title" style="margin-bottom:14px;">24-Hour Sending Quota</div>
+      {% set qp = ses.quota.usage_pct %}
+      <div class="stat-value" style="margin-bottom:4px;">{{ '{:,}'.format(ses.quota.sent_24h) }} <span style="font-size:16px;color:var(--gray-400);">/ {{ '{:,}'.format(ses.quota.max_24h) }}</span></div>
+      <div style="background:var(--gray-100);border-radius:8px;height:10px;overflow:hidden;margin:8px 0;">
+        <div style="height:100%;width:{{ [qp,100]|min }}%;background:{{ 'var(--danger)' if qp>90 else ('var(--warning)' if qp>75 else 'var(--success)') }};"></div>
+      </div>
+      <div style="font-size:13px;color:var(--gray-500);">{{ qp }}% of daily quota used &middot; max send rate {{ ses.quota.rate }}/sec</div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="margin-bottom:14px;">Volume (~14-day window)</div>
+      <table class="table"><tbody>
+        <tr><td>Delivery attempts</td><td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">{{ '{:,}'.format(ses.window.attempts) }}</td></tr>
+        <tr><td>Bounces</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(ses.window.bounces) }}</td></tr>
+        <tr><td>Complaints</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(ses.window.complaints) }}</td></tr>
+        <tr><td>Rejects</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(ses.window.rejects) }}</td></tr>
+      </tbody></table>
+    </div>
+  </div>
+
+  {% if ses.trend and ses.trend|length > 1 %}
+  <div class="card" style="margin-top:24px;">
+    <div class="card-title" style="margin-bottom:12px;">Daily Send Volume</div>
+    {% set _att = ses.trend|map(attribute='attempts')|list %}
+    {% set _bou = ses.trend|map(attribute='bounces')|list %}
+    {% set _com = ses.trend|map(attribute='complaints')|list %}
+    <div style="margin-bottom:18px;">{{ charts.linechart([
+      {'name':'Delivery attempts','color':'var(--primary)','data':_att},
+      {'name':'Bounces','color':'var(--danger)','data':_bou},
+      {'name':'Complaints','color':'var(--warning)','data':_com}]) }}</div>
+    <table class="table"><thead><tr><th>Date</th><th style="text-align:right;">Delivery Attempts</th><th style="text-align:right;">Bounces</th><th style="text-align:right;">Complaints</th></tr></thead><tbody>
+      {% for t in ses.trend|reverse %}<tr><td>{{ t.date }}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(t.attempts) }}</td><td style="text-align:right;">{{ t.bounces }}</td><td style="text-align:right;">{{ t.complaints }}</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+  {% endif %}
+{% else %}
+  <div class="card"><p style="color:var(--gray-500);">No SES snapshot yet. Click <strong>Refresh SES</strong> to pull account sending health.{% if notes %}<br><span style="color:var(--danger);font-size:13px;">{{ notes|join('; ') }}</span>{% endif %}</p></div>
+{% endif %}
+</div>
+
+{# ══════════════ SENDY CAMPAIGNS ══════════════ #}
+<div class="traffic-panel" data-tab="sendy" style="display:none;">
+<div class="card">
+  <div class="card-title" style="margin-bottom:4px;">Recent Campaigns &mdash; per-campaign deliverability</div>
+  <p style="color:var(--gray-400);font-size:12px;margin:0 0 14px;">
+    {% if sendy_updated %}Sendy stats updated {{ sendy_updated }}. {% endif %}Auto-syncs nightly at 4:10am ET; click <strong>Refresh Sendy</strong> above to pull the latest opens/clicks now.
+  </p>
+  {% set _sc = campaigns|selectattr('sent_at')|sort(attribute='sent_at')|list %}
+  {% if _sc|length > 1 %}
+  {% set _ors = [] %}
+  {% for c in _sc %}{% set _ = _ors.append((100*c.opens/(c.sent or 1))|round(2)) %}{% endfor %}
+  <div style="margin-bottom:20px;"><div style="font-size:12px;color:var(--gray-500);margin-bottom:6px;">Open rate across sends (oldest &rarr; newest)</div>{{ charts.linechart([{'name':'Open rate %','color':'var(--primary)','data':_ors}]) }}</div>
+  {% endif %}
+  <div style="overflow-x:auto;">
+  <table class="table">
+    <thead><tr><th>Campaign</th><th>Sent</th><th style="text-align:right;">Recipients</th><th style="text-align:right;">Open</th><th style="text-align:right;">Click</th><th style="text-align:right;">Bounce</th><th style="text-align:right;">Complaint</th><th style="text-align:right;">Unsub</th></tr></thead>
+    <tbody>
+      {% for c in campaigns %}
+      {% set s = c.sent or 1 %}
+      {% set bounce = 100*c.bounced/s %}
+      {% set compl = 100*c.complaints/s %}
+      {% set unsub = 100*c.unsubs/s %}
+      <tr>
+        <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.title or c.utm_campaign or ('#' ~ c.campaign_id) }}</td>
+        <td style="white-space:nowrap;color:var(--gray-500);">{{ c.sent_at.strftime('%Y-%m-%d') if c.sent_at else '&mdash;'|safe }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(c.sent) }}</td>
+        <td style="text-align:right;">{{ (100*c.opens/s)|round(1) }}%</td>
+        <td style="text-align:right;">{{ (100*c.clicks/s)|round(1) }}%</td>
+        <td style="text-align:right;color:{{ 'var(--success)' if bounce < 2 else ('var(--warning)' if bounce <= 5 else 'var(--danger)') }};font-weight:600;">{{ bounce|round(2) }}%</td>
+        <td style="text-align:right;color:{{ 'var(--success)' if compl < 0.05 else ('var(--warning)' if compl <= 0.1 else 'var(--danger)') }};font-weight:600;">{{ compl|round(2) }}%</td>
+        <td style="text-align:right;">{{ unsub|round(2) }}%</td>
+      </tr>
+      {% endfor %}
+      {% if not campaigns %}<tr><td colspan="8" style="color:var(--gray-400);">No campaign stats ingested yet.</td></tr>{% endif %}
+    </tbody>
+  </table>
+  </div>
+</div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.querySelectorAll('.traffic-tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      var tab = this.getAttribute('data-tab');
+      document.querySelectorAll('.traffic-tab').forEach(function (x) { x.classList.toggle('active', x === t); });
+      document.querySelectorAll('.traffic-panel').forEach(function (p) {
+        p.style.display = (p.getAttribute('data-tab') === tab) ? 'block' : 'none';
+      });
+    });
+  });
+</script>
+{% endblock %}

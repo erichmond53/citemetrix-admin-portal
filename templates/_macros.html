@@ -1,0 +1,68 @@
+{# Shared template macros for reusable UI components.
+
+   Import in any template that needs them:
+       {% import '_macros.html' as macros %}
+
+   Then call:
+       {{ macros.subscription_badge(event_type, tier) }}
+
+   Keeping macros centralized so behavior stays consistent — when a new
+   subscription event type gets added, this is the one place to update,
+   instead of hunting through customers.html, customer_detail.html, and
+   anywhere else that renders a tier badge. #}
+
+
+{# Render a subscription state badge for a user.
+
+   Args:
+       event_type: most recent subscription_events.event_type for the user
+                   (string, lowercase recommended). May be None/empty if
+                   user has never had a subscription event.
+       tier:       most recent subscription_events.to_tier (e.g. 'beta',
+                   'starter', 'professional', 'agency'). Used as the badge
+                   label when status is "active" — otherwise we use a
+                   state word (Cancelled, Paused, Cancelling).
+
+   Visual conventions:
+       Green:  user is actively paying (or has committed to)
+       Yellow: at-risk states — paused, cancelling at renewal
+       Red:    gone — cancelled, expired
+       Gray:   no event yet (brand-new user, free tier, beta-only) #}
+{% macro subscription_badge(event_type, tier) %}
+    {% set ev = (event_type or '') | lower %}
+    {% set tier_label = (tier or '') | title if tier else 'Active' %}
+
+    {# Active states — user is paying or committed to pay.
+       Includes lifecycle events that resolve TO an active state. #}
+    {% set ACTIVE_EVENTS = ['new_subscription', 'beta_converted', 'reactivated',
+                            'payment_recovered', 'upgraded', 'downgraded'] %}
+
+    {# At-risk states — currently active but trending negative #}
+    {% set AT_RISK_EVENTS = ['pending_cancel', 'paused'] %}
+
+    {# Terminal states — user is gone #}
+    {% set GONE_EVENTS = ['cancelled', 'expired'] %}
+
+    {% if ev in GONE_EVENTS %}
+        <span class="badge badge-danger">{{ ev | replace('_', ' ') | title }}</span>
+
+    {% elif ev == 'pending_cancel' %}
+        <span class="badge badge-warning">Cancelling</span>
+
+    {% elif ev == 'paused' %}
+        <span class="badge badge-warning">Paused</span>
+
+    {% elif ev in ACTIVE_EVENTS %}
+        <span class="badge badge-success">{{ tier_label }}</span>
+
+    {% elif ev %}
+        {# Unknown event type — fail visibly so we know to update this
+           macro rather than silently displaying a misleading "Active". #}
+        <span class="badge" style="background:var(--gray-200); color:var(--gray-700);" title="Unmapped event_type: {{ ev }}">{{ ev | replace('_', ' ') | title }}</span>
+
+    {% else %}
+        {# No subscription event ever — user is brand-new, on free tier,
+           or hasn't completed beta signup. #}
+        <span class="badge" style="background:var(--gray-100); color:var(--gray-600);">Free / Beta</span>
+    {% endif %}
+{% endmacro %}

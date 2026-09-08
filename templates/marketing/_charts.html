@@ -1,0 +1,49 @@
+{# Inline-SVG charts — no external library, CSP-safe. #}
+
+{# Tiny trend line (~120x30). Colour = last-7 vs prior-7 direction: up=green, down=red, flat=grey. #}
+{% macro sparkline(series, width=120, height=30) -%}
+  {%- if series and series|length > 1 and (series|max) > 0 -%}
+    {%- set mx = series|max -%}{%- set mn = series|min -%}{%- set rng = (mx - mn) or 1 -%}
+    {%- set n = series|length -%}
+    {%- set last7 = series[-7:]|sum -%}{%- set prev7 = series[-14:-7]|sum -%}
+    {%- set col = 'var(--success)' if last7 > prev7 else ('var(--danger)' if last7 < prev7 else 'var(--gray-400)') -%}
+    {%- set pts = [] -%}
+    {%- for v in series -%}
+      {%- set x = (loop.index0 / (n-1) * (width-4) + 2) -%}
+      {%- set y = (height - 2 - ((v - mn) / rng) * (height-6)) -%}
+      {%- set _ = pts.append('%.1f,%.1f'|format(x, y)) -%}
+    {%- endfor -%}
+    {%- set lastpt = pts[-1].split(',') -%}
+    <svg width="{{ width }}" height="{{ height }}" viewBox="0 0 {{ width }} {{ height }}" preserveAspectRatio="none" style="display:block;margin-top:8px;overflow:visible;" aria-hidden="true">
+      <polyline points="{{ pts|join(' ') }}" fill="none" stroke="{{ col }}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="{{ lastpt[0] }}" cy="{{ lastpt[1] }}" r="2" fill="{{ col }}"/>
+    </svg>
+  {%- endif -%}
+{%- endmacro %}
+
+{# Multi-series line chart with shared scale, baseline, max label + legend. series=[{name,color,data:[...]}] #}
+{% macro linechart(series, width=560, height=150) -%}
+  {%- set all = [] -%}
+  {%- for s in series -%}{%- for v in s.data -%}{%- set _ = all.append(v) -%}{%- endfor -%}{%- endfor -%}
+  {%- if all and (all|max) > 0 -%}
+    {%- set mx = all|max -%}{%- set mn = [(all|min), 0]|min -%}{%- set rng = (mx - mn) or 1 -%}
+    {%- set n = series[0].data|length -%}
+    {%- set ploth = height - 16 -%}
+    <svg width="100%" viewBox="0 0 {{ width }} {{ height }}" preserveAspectRatio="none" style="display:block;overflow:visible;">
+      <line x1="0" y1="{{ ploth }}" x2="{{ width }}" y2="{{ ploth }}" stroke="var(--gray-200)" stroke-width="1"/>
+      {%- for s in series -%}
+        {%- set pts = [] -%}
+        {%- for v in s.data -%}
+          {%- set x = (loop.index0 / ((n - 1) or 1) * width) -%}
+          {%- set y = (ploth - ((v - mn) / rng) * (ploth - 4)) -%}
+          {%- set _ = pts.append('%.1f,%.1f'|format(x, y)) -%}
+        {%- endfor -%}
+        <polyline points="{{ pts|join(' ') }}" fill="none" stroke="{{ s.color }}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      {%- endfor -%}
+      <text x="0" y="11" fill="var(--gray-400)" style="font:11px system-ui;">{{ '{:,}'.format(mx|round|int) }}</text>
+    </svg>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:7px;font-size:12px;">
+      {%- for s in series -%}<span style="color:var(--gray-600);"><span style="display:inline-block;width:9px;height:9px;background:{{ s.color }};border-radius:2px;margin-right:5px;vertical-align:middle;"></span>{{ s.name }}</span>{%- endfor -%}
+    </div>
+  {%- endif -%}
+{%- endmacro %}

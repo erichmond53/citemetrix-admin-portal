@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Sources — Campaign Builder{% endblock %}
+{% block page_title %}Sources{% endblock %}
+
+{% block content %}
+<style>
+  .cb-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
+  @media(max-width:700px){ .cb-grid{ grid-template-columns:1fr; } }
+  .cb-field label { display:block; font-size:12px; font-weight:600; color:var(--gray-600); margin-bottom:5px; text-transform:uppercase; letter-spacing:.02em; }
+  .cb-field input, .cb-field select { width:100%; padding:9px 11px; border:1px solid var(--gray-300); border-radius:8px; font-size:14px; color:var(--gray-800); background:#fff; }
+  .cb-field input:focus, .cb-field select:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
+  .cb-hint { font-size:11px; color:var(--gray-400); margin-top:4px; }
+  .cb-preview { background:var(--gray-50); border:1px solid var(--gray-200); border-radius:8px; padding:14px 16px; margin-top:4px; }
+  .cb-preview code { font-family:var(--mono, monospace); font-size:13px; color:var(--primary); word-break:break-all; }
+  .cb-copy { cursor:pointer; }
+</style>
+
+<div class="card">
+  <div class="card-header"><div class="card-title">Build a tagged campaign link</div></div>
+  <p style="color:var(--gray-500);font-size:13px;margin:-6px 0 18px;">
+    Generates a consistent UTM-tagged URL and saves it. Use these on <strong>every</strong> link you post &mdash; email, social, ads, QR.
+    Consistent tags are what let the dashboard group channels cleanly, and it's the only way social (LinkedIn, Facebook, Pinterest, TikTok&hellip;) enters the funnel.</p>
+
+  <form method="POST" action="/marketing/campaign-builder/save" id="cbForm">
+    <div class="cb-grid">
+      <div class="cb-field" style="grid-column:1 / -1;">
+        <label>Destination URL</label>
+        <input name="base_url" id="cb_base" list="cb_dests" value="https://citemetrix.com/check/" autocomplete="off">
+        <datalist id="cb_dests">
+          <option value="https://citemetrix.com/check/"></option>
+          <option value="https://citemetrix.com/"></option>
+          <option value="https://citemetrix.com/pricing/"></option>
+          <option value="https://citemetrix.com/pricing/agencies/"></option>
+          <option value="https://citemetrix.com/book-demo/"></option>
+        </datalist>
+      </div>
+      <div class="cb-field">
+        <label>Source (channel)</label>
+        <select name="source" id="cb_source">
+          <option value="email">email</option>
+          <option value="linkedin">linkedin</option>
+          <option value="facebook">facebook</option>
+          <option value="pinterest">pinterest</option>
+          <option value="tiktok">tiktok</option>
+          <option value="instagram">instagram</option>
+          <option value="twitter">twitter / x</option>
+          <option value="youtube">youtube</option>
+          <option value="reddit">reddit</option>
+          <option value="google">google</option>
+          <option value="bing">bing</option>
+          <option value="referral">referral</option>
+          <option value="qr">qr</option>
+          <option value="direct">direct</option>
+        </select>
+      </div>
+      <div class="cb-field">
+        <label>Medium</label>
+        <select name="medium" id="cb_medium">
+          <option value="email">email</option>
+          <option value="social">social</option>
+          <option value="cpc">cpc (paid)</option>
+          <option value="organic">organic</option>
+          <option value="referral">referral</option>
+          <option value="qr">qr</option>
+          <option value="affiliate">affiliate</option>
+        </select>
+        <div class="cb-hint">auto-set from source; override if it's a paid placement</div>
+      </div>
+      <div class="cb-field">
+        <label>Campaign</label>
+        <input name="campaign" id="cb_campaign" placeholder="wave3_202608" autocomplete="off">
+        <div class="cb-hint">initiative_yyyymm &middot; lowercase, no spaces (auto-cleaned)</div>
+      </div>
+      <div class="cb-field">
+        <label>Goal <span style="text-transform:none;color:var(--gray-400);font-weight:400;">(optional)</span></label>
+        <input name="goal" id="cb_goal" placeholder="free check / demo / subscribe" autocomplete="off">
+      </div>
+      <div class="cb-field">
+        <label>Content <span style="text-transform:none;color:var(--gray-400);font-weight:400;">(optional)</span></label>
+        <input name="content" id="cb_content" placeholder="variant_a / hero_cta" autocomplete="off">
+      </div>
+      <div class="cb-field">
+        <label>Term <span style="text-transform:none;color:var(--gray-400);font-weight:400;">(optional)</span></label>
+        <input name="term" id="cb_term" placeholder="keyword (paid search)" autocomplete="off">
+      </div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px;text-transform:uppercase;">Tagged URL preview</label>
+      <div class="cb-preview"><code id="cb_preview">&mdash;</code></div>
+    </div>
+
+    <div style="margin-top:18px;display:flex;gap:10px;">
+      <button type="submit" class="btn btn-primary">Save campaign</button>
+      <button type="button" class="btn btn-secondary cb-copy" data-target="cb_preview">Copy link</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header"><div class="card-title">Saved campaigns ({{ campaigns|length }})</div></div>
+  <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr>
+        <th>Campaign</th><th>Source</th><th>Medium</th><th>Goal</th><th>Tagged URL</th><th>Created</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for c in campaigns %}
+        <tr>
+          <td><a href="#" class="cb-results" data-campaign="{{ c.label }}" style="color:var(--primary);font-weight:600;text-decoration:none;" title="View results">{{ c.label }} &#8599;</a></td>
+          <td>{{ c.source }}</td>
+          <td style="color:var(--gray-500);">{{ c.medium }}</td>
+          <td style="color:var(--gray-500);">{{ c.goal or '—' }}</td>
+          <td style="max-width:340px;"><code id="url{{ c.id }}" style="font-size:12px;color:var(--primary);word-break:break-all;">{{ c.tagged_url }}</code></td>
+          <td style="color:var(--gray-400);font-size:12px;white-space:nowrap;">{{ c.created_at.strftime('%Y-%m-%d') if c.created_at else '' }}</td>
+          <td><button type="button" class="btn btn-secondary cb-copy" data-target="url{{ c.id }}" style="padding:5px 10px;font-size:12px;">Copy</button></td>
+        </tr>
+      {% endfor %}
+      {% if not campaigns %}<tr><td colspan="7" style="color:var(--gray-400);">No campaigns yet — build one above.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  var SOURCE_MEDIUM = { email:'email', linkedin:'social', facebook:'social', pinterest:'social',
+    tiktok:'social', instagram:'social', twitter:'social', youtube:'social', reddit:'social',
+    google:'cpc', bing:'cpc', referral:'referral', qr:'qr', direct:'' };
+  function slug(v){ return (v||'').trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_-]/g,''); }
+  var f = {
+    base: document.getElementById('cb_base'), source: document.getElementById('cb_source'),
+    medium: document.getElementById('cb_medium'), campaign: document.getElementById('cb_campaign'),
+    content: document.getElementById('cb_content'), term: document.getElementById('cb_term')
+  };
+  var out = document.getElementById('cb_preview');
+  function build(){
+    var base = (f.base.value||'').trim();
+    var p = [];
+    if (slug(f.source.value)) p.push('utm_source='+slug(f.source.value));
+    if (slug(f.medium.value)) p.push('utm_medium='+slug(f.medium.value));
+    if (slug(f.campaign.value)) p.push('utm_campaign='+slug(f.campaign.value));
+    if (slug(f.content.value)) p.push('utm_content='+slug(f.content.value));
+    if (slug(f.term.value)) p.push('utm_term='+slug(f.term.value));
+    if (!base || !p.length){ out.textContent='—'; return; }
+    out.textContent = base + (base.indexOf('?')>-1?'&':'?') + p.join('&');
+  }
+  Object.values(f).forEach(function(el){ el && el.addEventListener('input', build); });
+  f.source.addEventListener('change', function(){
+    var m = SOURCE_MEDIUM[f.source.value]; if (m) f.medium.value = m; build();
+  });
+  build();
+  document.querySelectorAll('.cb-copy').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var el = document.getElementById(btn.getAttribute('data-target'));
+      var txt = el ? el.textContent : '';
+      if (!txt || txt==='—') return;
+      navigator.clipboard.writeText(txt).then(function(){
+        var o = btn.textContent; btn.textContent='Copied!'; setTimeout(function(){ btn.textContent=o; }, 1200);
+      });
+    });
+  });
+})();
+</script>
+
+<!-- Campaign results popup -->
+<div id="cbModal" style="display:none;position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:1000;padding:24px;align-items:flex-start;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;max-width:600px;width:100%;margin-top:6vh;box-shadow:0 24px 60px rgba(0,0,0,.3);">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid var(--gray-200);">
+      <div style="font-size:16px;font-weight:600;color:var(--gray-800);" id="cbModalTitle">Campaign results</div>
+      <button type="button" id="cbModalClose" class="btn btn-secondary" style="padding:2px 12px;font-size:18px;line-height:1.2;">&times;</button>
+    </div>
+    <div id="cbModalBody" style="padding:22px;"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var modal=document.getElementById('cbModal'), body=document.getElementById('cbModalBody'), title=document.getElementById('cbModalTitle');
+  function close(){ modal.style.display='none'; }
+  document.getElementById('cbModalClose').addEventListener('click', close);
+  modal.addEventListener('click', function(e){ if(e.target===modal) close(); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') close(); });
+  function fmt(n){ return (n==null?0:n).toLocaleString(); }
+  function step(label,val,accent){ return '<div style="text-align:center;padding:8px 6px;min-width:70px;">'
+    +'<div style="font-size:19px;font-weight:700;color:'+(accent||'#1f2937')+';font-variant-numeric:tabular-nums;">'+val+'</div>'
+    +'<div style="font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-top:3px;">'+label+'</div></div>'; }
+  document.querySelectorAll('.cb-results').forEach(function(a){
+    a.addEventListener('click', function(e){
+      e.preventDefault();
+      var camp=a.getAttribute('data-campaign');
+      title.textContent=camp;
+      body.innerHTML='<p style="color:#6b7280;">Loading&hellip;</p>';
+      modal.style.display='flex';
+      fetch('/marketing/campaign-builder/results?campaign='+encodeURIComponent(camp))
+        .then(function(r){return r.json();})
+        .then(function(d){
+          if(!d.found){
+            body.innerHTML='<p style="color:#6b7280;font-size:14px;line-height:1.6;">No measurable results yet &mdash; this campaign hasn\'t driven tracked traffic. Share it with this tagged link and the funnel appears here once the daily snapshot picks it up.</p>';
+            return;
+          }
+          var m=d.metrics, arrow='<div style="color:#d1d5db;font-size:15px;align-self:center;">&rarr;</div>';
+          var flow='<div style="display:flex;flex-wrap:wrap;gap:2px;align-items:center;justify-content:center;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:8px;">'
+            +step('Sent',fmt(m.sent))+arrow+step('Opened',fmt(m.opens))+arrow+step('Clicked',fmt(m.clicks))+arrow
+            +step('Sessions',fmt(m.sessions))+arrow+step('Scan',fmt(m.scan_completed))+arrow
+            +step('Leads',fmt(m.leads),m.leads>0?'#10b981':null)+arrow
+            +step('Customers',fmt(m.customers))+arrow+step('Revenue','$'+fmt(m.revenue),m.revenue>0?'#10b981':null)
+            +'</div>';
+          var conv=(m.sessions>0)?((100*m.leads/m.sessions).toFixed(1)+'% of sessions became leads'):'';
+          body.innerHTML=flow+'<p style="color:#6b7280;font-size:12px;margin:14px 0 0;text-align:center;">'+conv+(d.generated?(' &middot; as of '+String(d.generated).replace('T',' ')):'')+'</p>';
+        })
+        .catch(function(){ body.innerHTML='<p style="color:#ef4444;">Could not load results.</p>'; });
+    });
+  });
+})();
+</script>
+{% endblock %}

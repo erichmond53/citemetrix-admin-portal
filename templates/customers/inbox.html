@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Inbox{% endblock %}
+{% block page_title %}Inbox{% endblock %}
+{% block content %}
+
+<style>
+  .inbox-filters { display:flex; gap:8px; margin-bottom:16px; }
+  .inbox-filter { background:var(--gray-100); border:none; border-radius:20px; padding:6px 16px; font-size:13px; font-weight:600; color:var(--gray-600); cursor:pointer; }
+  .inbox-filter.active { background:var(--primary); color:#fff; }
+  .inbox-row { display:flex; align-items:center; gap:14px; padding:14px 16px; border-bottom:1px solid var(--gray-100); cursor:pointer; }
+  .inbox-row:hover { background:var(--gray-50); }
+  .inbox-row.unread { background:#f5f7ff; }
+  .inbox-detail { display:none; padding:0 16px 20px 16px; background:var(--gray-50); border-bottom:1px solid var(--gray-100); }
+  .inbox-detail.open { display:block; }
+  .chat-msg { padding:8px 12px; border-radius:10px; margin:6px 0; max-width:80%; font-size:13px; line-height:1.5; }
+  .chat-visitor { background:#fff; border:1px solid var(--gray-200); }
+  .chat-assistant { background:#eef2ff; margin-left:auto; }
+</style>
+
+<div class="inbox-filters">
+  <button type="button" class="inbox-filter active" data-f="all">All ({{ items|length }})</button>
+  <button type="button" class="inbox-filter" data-f="contact">Contact Forms ({{ items|selectattr('type','equalto','contact')|list|length }})</button>
+  <button type="button" class="inbox-filter" data-f="chat">Chat ({{ items|selectattr('type','equalto','chat')|list|length }})</button>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  {% for it in items %}
+  <div class="inbox-item">
+    <div class="inbox-row {% if it.type == 'contact' and not it.read %}unread{% endif %}" data-type="{{ it.type }}" onclick="this.nextElementSibling.classList.toggle('open')">
+      <span class="badge {{ 'badge-info' if it.type == 'chat' else 'badge-warning' }}" style="white-space:nowrap;">{{ 'Chat' if it.type == 'chat' else 'Contact Form' }}</span>
+      <div style="min-width:180px;">
+        <div style="font-weight:600;color:var(--gray-800);">{{ it.name or 'Anonymous' }}</div>
+        {% if it.email %}<div style="font-size:12px;color:var(--gray-500);">{{ it.email }}</div>{% endif %}
+      </div>
+      <div style="flex:1;min-width:0;">
+        {% if it.subject %}<div style="font-size:13px;font-weight:500;color:var(--gray-700);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ it.subject }}</div>{% endif %}
+        <div style="font-size:13px;color:var(--gray-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ (it.message or '')[:120] }}</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap;">
+        <div style="font-size:12px;color:var(--gray-500);">{{ it.when.strftime('%Y-%m-%d %H:%M') if it.when else '' }}</div>
+        {% if it.type == 'contact' %}<span class="badge {{ 'badge-warning' if not it.read else '' }}" style="{% if it.read %}background:var(--gray-100);color:var(--gray-500);{% endif %}font-size:11px;">{{ 'New' if not it.read else 'Read' }}</span>
+        {% elif it.lead_captured %}<span class="badge badge-success" style="font-size:11px;">Lead captured</span>{% endif %}
+      </div>
+    </div>
+    <div class="inbox-detail">
+      {% if it.type == 'contact' %}
+        <table class="table" style="margin-bottom:10px;"><tbody>
+          {% if it.phone %}<tr><td style="width:140px;color:var(--gray-500);">Phone</td><td>{{ it.phone }}</td></tr>{% endif %}
+          {% if it.preferred %}<tr><td style="color:var(--gray-500);">Prefers</td><td>{{ it.preferred }}</td></tr>{% endif %}
+          {% if it.subject %}<tr><td style="color:var(--gray-500);">Subject</td><td>{{ it.subject }}</td></tr>{% endif %}
+        </tbody></table>
+        <div style="white-space:pre-wrap;font-size:14px;line-height:1.6;color:var(--gray-800);background:#fff;border:1px solid var(--gray-200);border-radius:8px;padding:14px;">{{ it.message }}</div>
+      {% else %}
+        <div style="font-size:12px;color:var(--gray-500);margin:6px 0 10px;">
+          {% if it.page_url %}Started on {{ it.page_url }} &middot; {% endif %}{{ it.messages|length }} messages
+          {% if it.email %}&middot; captured: {{ it.name }} ({{ it.email }}){% if it.phone %}, {{ it.phone }}{% endif %}{% if it.interest %} &mdash; interested in {{ it.interest }}{% endif %}{% endif %}
+        </div>
+        {% for m in it.messages %}
+        <div class="chat-msg {{ 'chat-assistant' if m.role in ['assistant','bot'] else 'chat-visitor' }}">{{ m.content }}</div>
+        {% endfor %}
+        {% if not it.messages %}<div style="color:var(--gray-400);font-size:13px;">No transcript.</div>{% endif %}
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% if not items %}<div style="padding:24px;color:var(--gray-400);">Inbox is empty.</div>{% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.querySelectorAll('.inbox-filter').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var f = this.getAttribute('data-f');
+      document.querySelectorAll('.inbox-filter').forEach(function (x) { x.classList.toggle('active', x === b); });
+      document.querySelectorAll('.inbox-item').forEach(function (item) {
+        var t = item.querySelector('.inbox-row').getAttribute('data-type');
+        item.style.display = (f === 'all' || f === t) ? 'block' : 'none';
+      });
+    });
+  });
+</script>
+{% endblock %}

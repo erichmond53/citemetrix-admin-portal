@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+{% block title %}{{ campaign.name }}{% endblock %}
+{% block content %}
+<style>
+.cd-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
+.cd-step { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px 20px; margin-bottom:14px; }
+.cd-step-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.cd-step-num { font-size:12px; font-weight:700; text-transform:uppercase; color:var(--primary); }
+.cd-field { margin-bottom:10px; }
+.cd-field label { display:block; font-size:12px; font-weight:500; color:var(--gray-600); margin-bottom:4px; }
+.cd-field input[type=text], .cd-field input[type=number], .cd-field input[type=email], .cd-field textarea { width:100%; box-sizing:border-box; padding:9px 11px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; font-family:inherit; }
+.cd-field textarea { min-height:100px; }
+.cd-row { display:flex; gap:14px; }
+.cd-row .cd-field { flex:1; }
+.cd-cta-box { background:var(--gray-50, #f9fafb); border:1px solid var(--gray-200); border-radius:8px; padding:12px 14px; margin-bottom:10px; }
+.cd-cta-box .cd-cta-title { font-size:12px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin-bottom:8px; }
+.cd-cta-url-preview { font-size:12px; color:var(--gray-500); margin-top:4px; word-break:break-all; }
+.cd-cta-url-preview code { background:var(--gray-100); padding:2px 5px; border-radius:4px; }
+.cd-onpage-box { background:#fff; border:1px dashed var(--gray-200); border-radius:8px; padding:12px 14px; margin-top:10px; }
+.cd-onpage-box .cd-cta-title { font-size:12px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin-bottom:8px; }
+.cd-sync-status { font-size:12px; margin-top:8px; }
+.cd-sync-status.synced { color:#166534; }
+.cd-sync-status.failed { color:#991B1B; }
+.cd-action-status { font-size:12px; margin-top:8px; }
+.cd-action-status.ok { color:#166534; }
+.cd-action-status.err { color:#991B1B; }
+.cd-preview-onpage { margin-top:18px; padding-top:16px; border-top:1px solid var(--gray-200); }
+.cd-preview-onpage h4 { margin:0 0 8px; font-size:13px; color:var(--gray-500); text-transform:uppercase; }
+.cd-preview-onpage-title { font-size:16px; font-weight:700; margin-bottom:6px; }
+.cd-preview-onpage-copy { font-size:14px; color:var(--gray-600); line-height:1.5; }
+.cd-funnel-row { display:flex; align-items:center; gap:12px; font-size:13px; margin-bottom:8px; }
+.cd-funnel-bar-wrap { flex:1; background:var(--gray-100); border-radius:6px; height:18px; overflow:hidden; }
+.cd-funnel-bar { height:100%; background:var(--primary); }
+.cd-test-row { display:flex; gap:8px; align-items:center; margin-top:12px; padding-top:12px; border-top:1px solid var(--gray-100); }
+.cd-test-row input { flex:1; }
+.cd-test-status { font-size:12px; margin-top:6px; }
+.btn-s { background:var(--gray-100); color:var(--gray-700); border:1px solid var(--gray-200); padding:8px 14px; border-radius:8px; font-weight:500; cursor:pointer; font-size:13px; }
+.btn-p2 { background:var(--primary); color:#fff; border:none; padding:8px 14px; border-radius:8px; font-weight:500; cursor:pointer; font-size:13px; }
+.btn-o { background:#fff; color:var(--primary); border:1px solid var(--primary); padding:8px 14px; border-radius:8px; font-weight:500; cursor:pointer; font-size:13px; }
+.cd-modal-backdrop { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.45); z-index:200; align-items:center; justify-content:center; }
+.cd-modal-backdrop.open { display:flex; }
+.cd-modal { background:#fff; border-radius:12px; padding:24px; width:100%; max-width:620px; max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.25); }
+.cd-modal h3 { margin:0 0 4px; font-size:17px; }
+.cd-modal .cd-modal-note { font-size:12px; color:var(--gray-500); margin-bottom:16px; }
+.cd-preview-subject { font-size:13px; font-weight:600; color:var(--gray-500); margin-bottom:6px; }
+.cd-preview-subject span { color:var(--gray-900, #111); font-weight:700; }
+.cd-preview-body { white-space:pre-wrap; background:var(--gray-50, #f9fafb); border:1px solid var(--gray-200); border-radius:8px; padding:16px; font-size:14px; line-height:1.6; }
+</style>
+
+<div class="cd-header">
+  <div>
+    <h1 style="margin:0 0 4px;">{{ campaign.name }}</h1>
+    <div style="color:var(--gray-500);font-size:13px;">
+      Status: <strong>{{ 'Active' if campaign.active else 'Paused' }}</strong> ·
+      {{ status_counts.get('active', 0) }} active · {{ status_counts.get('completed', 0) }} completed ·
+      {{ status_counts.get('unsubscribed', 0) }} unsubscribed
+    </div>
+  </div>
+  <button class="btn-s" onclick="dcToggle({{ campaign.id }})">{{ 'Pause campaign' if campaign.active else 'Activate campaign' }}</button>
+</div>
+
+{% if funnel %}
+<div class="card" style="margin-bottom:24px;padding:18px 20px;">
+  <h3 style="margin:0 0 14px;font-size:14px;">Funnel — how far people get</h3>
+  {% set max_reached = (funnel|map(attribute='reached')|max) or 1 %}
+  {% for f in funnel %}
+    <div class="cd-funnel-row">
+      <span style="width:90px;">Step {{ f.step_order }}</span>
+      <div class="cd-funnel-bar-wrap"><div class="cd-funnel-bar" style="width:{{ (f.reached / max_reached * 100) if max_reached else 0 }}%;"></div></div>
+      <span style="width:110px;text-align:right;color:var(--gray-500);">{{ f.reached }} reached · {{ f.sent_count }} sent</span>
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom:24px;padding:18px 20px;">
+  <h3 style="margin:0 0 14px;font-size:14px;">Pick list / segment — enroll a batch of leads</h3>
+  <div style="display:flex;gap:12px;align-items:flex-end;">
+    <div class="cd-field" style="flex:1;margin:0;">
+      <label>Batch</label>
+      <select id="cd-enroll-batch" style="width:100%;padding:9px 11px;border:1px solid var(--gray-200);border-radius:8px;font-size:14px;">
+        {% for b in batches %}<option value="{{ b.id }}">{{ b.name }} ({{ b.new_count }} leads)</option>{% endfor %}
+      </select>
+    </div>
+    <button class="btn-p2" onclick="dcEnroll({{ campaign.id }})">Enroll</button>
+  </div>
+  <div style="font-size:12px;color:var(--gray-500);margin-top:6px;">Only leads with an email address can be enrolled in an email drip — a batch that includes LinkedIn-only (no-email) contacts will enroll everyone else and skip those automatically.</div>
+  <div id="cd-enroll-status" style="font-size:13px;margin-top:8px;"></div>
+</div>
+
+<h3 style="margin:0 0 14px;">Steps</h3>
+<div id="cd-steps">
+{% for s in steps %}
+  <div class="cd-step" data-step-id="{{ s.id }}" data-step-order="{{ s.step_order }}">
+    <div class="cd-step-head">
+      <span class="cd-step-num">Step {{ s.step_order }} — day {{ s.day_offset }}</span>
+      <button class="btn-s" onclick="dcDeleteStep({{ s.id }})">Delete</button>
+    </div>
+    <div class="cd-row">
+      <div class="cd-field"><label>Days after being added to this list</label><input type="number" class="cd-day-offset" value="{{ s.day_offset }}"></div>
+      <div class="cd-field" style="flex:0 0 200px;"><label><input type="checkbox" class="cd-is-survey" {{ 'checked' if s.is_survey_step }}> This step is the survey invite</label></div>
+      <div class="cd-field" style="flex:0 0 100px;"><label>Survey epoch</label><input type="text" class="cd-survey-epoch" value="{{ s.survey_epoch or '' }}" placeholder="e.g. 1"></div>
+    </div>
+    <div class="cd-field"><label>Subject</label><input type="text" class="cd-subject" value="{{ s.subject or '' }}"></div>
+    <div class="cd-field"><label>Copy — {{ '{{first_name}}' }}, {{ '{{last_name}}' }}, {{ '{{company}}' }} available as merge tags</label><textarea class="cd-body">{{ s.body or '' }}</textarea></div>
+    <div class="cd-cta-box">
+      <div class="cd-cta-title">Call to action</div>
+      <div class="cd-row">
+        <div class="cd-field"><label>CTA text</label><input type="text" class="cd-cta-text" value="{{ s.cta_text or '' }}" placeholder="e.g. Check my visibility"></div>
+        <div class="cd-field"><label>Landing page key (matches /check/ messaging)</label><input type="text" class="cd-cta-key" value="{{ s.cta_key or '' }}" placeholder="e.g. drip-agency-principals"></div>
+      </div>
+      <div style="font-size:12px;color:var(--gray-500);">Use {{ '{{cta_button}}' }} or {{ '{{cta_url}}' }} in the copy above to place it — or leave it out and it's just available for reference.</div>
+      <div class="cd-cta-url-preview">Builds: <code class="cd-cta-url-live">(enter both fields above)</code></div>
+      <div class="cd-onpage-box">
+        <div class="cd-cta-title">On-page messaging (what /check/ shows when this is clicked)</div>
+        <div class="cd-field"><label>On-page title</label><input type="text" class="cd-onpage-title" value="{{ s.onpage_title or '' }}" placeholder="e.g. See what AI says about your agency"></div>
+        <div class="cd-field" style="margin-bottom:0;"><label>On-page marketing text</label><textarea class="cd-onpage-copy" style="min-height:70px;" placeholder="The paragraph under the headline on /check/">{{ s.onpage_copy or '' }}</textarea></div>
+        <div style="font-size:12px;color:var(--gray-500);margin-top:6px;">Fill in all four CTA fields (button text, key, title, marketing text) and Save to push this live to /check/ — reuses the CTA button text above as the on-page button too.</div>
+        <div class="cd-sync-status {{ s.onpage_sync_status or '' }}">{% if s.onpage_sync_status == 'synced' %}✓ Live on /check/{% elif s.onpage_sync_status == 'failed' %}✗ Not synced: {{ s.onpage_sync_error }}{% endif %}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn-p2" onclick="dcSaveStep({{ campaign.id }}, this)">Save step</button>
+      <button class="btn-o" onclick="dcPreview(this)">Preview</button>
+    </div>
+    <div class="cd-action-status"></div>
+    <div class="cd-test-row">
+      <input type="email" class="cd-test-email" placeholder="you@example.com">
+      <button class="btn-s" onclick="dcSendTest(this)">Send test email</button>
+    </div>
+    <div class="cd-test-status"></div>
+  </div>
+{% endfor %}
+</div>
+
+<div class="cd-step" style="border-style:dashed;">
+  <div class="cd-step-head"><span class="cd-step-num">New step</span></div>
+  <div class="cd-row">
+    <div class="cd-field"><label>Days after being added to this list</label><input type="number" id="cd-new-day-offset" value="0"></div>
+    <div class="cd-field" style="flex:0 0 200px;"><label><input type="checkbox" id="cd-new-is-survey"> This step is the survey invite</label></div>
+    <div class="cd-field" style="flex:0 0 100px;"><label>Survey epoch</label><input type="text" id="cd-new-survey-epoch" placeholder="e.g. 1"></div>
+  </div>
+  <div class="cd-field"><label>Subject</label><input type="text" id="cd-new-subject"></div>
+  <div class="cd-field"><label>Copy — {{ '{{first_name}}' }}, {{ '{{last_name}}' }}, {{ '{{company}}' }} available as merge tags</label><textarea id="cd-new-body"></textarea></div>
+  <div class="cd-cta-box">
+    <div class="cd-cta-title">Call to action</div>
+    <div class="cd-row">
+      <div class="cd-field"><label>CTA text</label><input type="text" id="cd-new-cta-text" placeholder="e.g. Check my visibility"></div>
+      <div class="cd-field"><label>Landing page key (matches /check/ messaging)</label><input type="text" id="cd-new-cta-key" placeholder="e.g. drip-agency-principals"></div>
+    </div>
+    <div style="font-size:12px;color:var(--gray-500);">Use {{ '{{cta_button}}' }} or {{ '{{cta_url}}' }} in the copy above to place it.</div>
+    <div class="cd-cta-url-preview">Builds: <code class="cd-cta-url-live">(enter both fields above)</code></div>
+    <div class="cd-onpage-box">
+      <div class="cd-cta-title">On-page messaging (what /check/ shows when this is clicked)</div>
+      <div class="cd-field"><label>On-page title</label><input type="text" id="cd-new-onpage-title" placeholder="e.g. See what AI says about your agency"></div>
+      <div class="cd-field" style="margin-bottom:0;"><label>On-page marketing text</label><textarea id="cd-new-onpage-copy" style="min-height:70px;" placeholder="The paragraph under the headline on /check/"></textarea></div>
+      <div style="font-size:12px;color:var(--gray-500);margin-top:6px;">Fill in all four CTA fields (button text, key, title, marketing text) and Add step to push this live to /check/ — reuses the CTA button text above as the on-page button too.</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button class="btn-p2" onclick="dcAddStep({{ campaign.id }}, this)">Add step</button>
+    <button class="btn-o" onclick="dcPreview(this)">Preview</button>
+  </div>
+  <div class="cd-action-status"></div>
+  <div class="cd-test-row">
+    <input type="email" class="cd-test-email" placeholder="you@example.com">
+    <button class="btn-s" onclick="dcSendTest(this)">Send test email</button>
+  </div>
+  <div class="cd-test-status"></div>
+</div>
+
+<div class="cd-modal-backdrop" id="cd-preview-modal-backdrop">
+  <div class="cd-modal">
+    <h3>Preview</h3>
+    <div class="cd-modal-note">Rendered with sample data (Jordan Rivera / Acme Marketing Co.) — not a real lead.</div>
+    <div class="cd-preview-subject">Subject: <span id="cd-preview-subject"></span></div>
+    <div class="cd-preview-body" id="cd-preview-body"></div>
+    <div id="cd-preview-html-wrap" style="display:none;margin-top:14px;">
+      <div style="font-size:12px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">How the CTA renders as a real button (HTML email clients):</div>
+      <iframe id="cd-preview-html-frame" style="width:100%;min-height:220px;border:1px solid var(--gray-200);border-radius:8px;background:#fff;"></iframe>
+    </div>
+    <div class="cd-preview-onpage" id="cd-preview-onpage" style="display:none;">
+      <h4>On /check/ (utm_campaign click-through)</h4>
+      <div class="cd-preview-onpage-title" id="cd-preview-onpage-title"></div>
+      <div class="cd-preview-onpage-copy" id="cd-preview-onpage-copy"></div>
+    </div>
+    <div style="text-align:right;margin-top:16px;">
+      <button class="btn-s" onclick="document.getElementById('cd-preview-modal-backdrop').classList.remove('open')">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function dcFieldsFromCard(el){
+  const card = el.closest ? el.closest('.cd-step') : el;
+  const isNewCard = !card.hasAttribute('data-step-id');
+  if (isNewCard) {
+    return {
+      card,
+      step_order: {{ (steps|length) + 1 }},
+      subject: document.getElementById('cd-new-subject').value,
+      body: document.getElementById('cd-new-body').value,
+      cta_text: document.getElementById('cd-new-cta-text').value,
+      cta_key: document.getElementById('cd-new-cta-key').value,
+      onpage_title: document.getElementById('cd-new-onpage-title').value,
+      onpage_copy: document.getElementById('cd-new-onpage-copy').value,
+    };
+  }
+  return {
+    card,
+    step_order: parseInt(card.getAttribute('data-step-order') || '1', 10),
+    subject: card.querySelector('.cd-subject').value,
+    body: card.querySelector('.cd-body').value,
+    cta_text: card.querySelector('.cd-cta-text').value,
+    cta_key: card.querySelector('.cd-cta-key').value,
+    onpage_title: card.querySelector('.cd-onpage-title').value,
+    onpage_copy: card.querySelector('.cd-onpage-copy').value,
+  };
+}
+
+function dcUpdateCtaPreview(input){
+  const box = input.closest('.cd-cta-box');
+  const textEl = box.querySelector('.cd-cta-text, [id$="cta-text"]');
+  const keyEl = box.querySelector('.cd-cta-key, [id$="cta-key"]');
+  const out = box.querySelector('.cd-cta-url-live');
+  const text = (textEl.value || '').trim();
+  const key = (keyEl.value || '').trim();
+  if (!text || !key) { out.textContent = '(enter both fields above)'; return; }
+  out.textContent = `https://citemetrix.com/check/?utm_source=email&utm_medium=drip&utm_campaign=${encodeURIComponent(key)}&utm_content=stepN`;
+}
+document.querySelectorAll('.cd-cta-text, .cd-cta-key, [id$="cta-text"], [id$="cta-key"]').forEach(el => {
+  el.addEventListener('input', () => dcUpdateCtaPreview(el));
+  dcUpdateCtaPreview(el); // populate on load too, not just on typing -- a saved step's CTA fields already have values
+});
+
+async function dcToggle(id){
+  const r = await fetch('/api/drip/campaigns/'+id+'/toggle', {method:'POST'});
+  if (r.ok) location.reload();
+}
+async function dcEnroll(id){
+  const batchId = document.getElementById('cd-enroll-batch').value;
+  const status = document.getElementById('cd-enroll-status');
+  status.textContent = 'Enrolling…';
+  const r = await fetch('/api/drip/campaigns/'+id+'/enroll', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({batch_id: batchId})});
+  const j = await r.json();
+  if (!r.ok) { status.style.color = '#991B1B'; status.textContent = j.error || 'Failed.'; return; }
+  status.style.color = '#166534';
+  const suppressedNote = j.skipped_suppressed ? ` ${j.skipped_suppressed} already on the SES suppression list,` : '';
+  const nurtureNote = j.skipped_nurture_owned ? ` ${j.skipped_nurture_owned} owned by the WordPress nurture cron,` : '';
+  const clusterNote = j.skipped_cluster_conflict ? ` ${j.skipped_cluster_conflict} blocked by an active enrollment elsewhere in the same person cluster,` : '';
+  const noEmailNote = j.skipped_no_email ? ` ${j.skipped_no_email} have no email on file (LinkedIn-only),` : '';
+  const skipNote = (suppressedNote || nurtureNote || clusterNote || noEmailNote) ? ` (skipped:${suppressedNote}${nurtureNote}${clusterNote}${noEmailNote})`.replace(/,\)/, ')') : '';
+  status.textContent = `Enrolled ${j.enrolled} lead(s).${skipNote}`;
+  setTimeout(() => location.reload(), 1800);
+}
+async function dcSaveStep(campaignId, btn){
+  const card = btn.closest('.cd-step');
+  const stepId = card.getAttribute('data-step-id');
+  const payload = {
+    step_id: stepId,
+    day_offset: parseInt(card.querySelector('.cd-day-offset').value || '0', 10),
+    is_survey_step: card.querySelector('.cd-is-survey').checked,
+    survey_epoch: card.querySelector('.cd-survey-epoch').value,
+    subject: card.querySelector('.cd-subject').value,
+    body: card.querySelector('.cd-body').value,
+    cta_text: card.querySelector('.cd-cta-text').value,
+    cta_key: card.querySelector('.cd-cta-key').value,
+    onpage_title: card.querySelector('.cd-onpage-title').value,
+    onpage_copy: card.querySelector('.cd-onpage-copy').value,
+  };
+  const r = await fetch('/api/drip/campaigns/'+campaignId+'/steps', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  const j = await r.json();
+  const syncEl = card.querySelector('.cd-sync-status');
+  const actionEl = card.querySelector('.cd-action-status');
+  if (!r.ok) { actionEl.className = 'cd-action-status err'; actionEl.textContent = j.error || 'Save failed.'; return; }
+  actionEl.className = 'cd-action-status'; actionEl.textContent = '';
+  btn.textContent = 'Saved ✓'; setTimeout(() => btn.textContent = 'Save step', 1200);
+  syncEl.className = 'cd-sync-status ' + (j.onpage_sync_status || '');
+  if (j.onpage_sync_status === 'synced') { syncEl.textContent = '✓ Live on /check/'; }
+  else if (j.onpage_sync_status === 'failed') { syncEl.textContent = '✗ Not synced: ' + j.onpage_sync_error; }
+  else { syncEl.textContent = ''; }
+}
+async function dcAddStep(campaignId, btn){
+  const card = btn.closest('.cd-step');
+  const actionEl = card.querySelector('.cd-action-status');
+  const payload = {
+    day_offset: parseInt(document.getElementById('cd-new-day-offset').value || '0', 10),
+    is_survey_step: document.getElementById('cd-new-is-survey').checked,
+    survey_epoch: document.getElementById('cd-new-survey-epoch').value,
+    subject: document.getElementById('cd-new-subject').value,
+    body: document.getElementById('cd-new-body').value,
+    cta_text: document.getElementById('cd-new-cta-text').value,
+    cta_key: document.getElementById('cd-new-cta-key').value,
+    onpage_title: document.getElementById('cd-new-onpage-title').value,
+    onpage_copy: document.getElementById('cd-new-onpage-copy').value,
+  };
+  const r = await fetch('/api/drip/campaigns/'+campaignId+'/steps', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  const j = await r.json();
+  if (!r.ok) { actionEl.className = 'cd-action-status err'; actionEl.textContent = j.error || 'Add step failed.'; return; }
+  if (j.onpage_sync_status === 'failed') {
+    actionEl.className = 'cd-action-status err';
+    actionEl.textContent = 'Step added, but the on-page copy did not sync to /check/: ' + j.onpage_sync_error;
+    setTimeout(() => location.reload(), 3500); // long enough to actually read the error before the reload wipes it
+    return;
+  }
+  location.reload();
+}
+async function dcDeleteStep(stepId){
+  if (!confirm('Delete this step?')) return;
+  const r = await fetch('/api/drip/steps/'+stepId+'/delete', {method:'POST'});
+  if (r.ok) location.reload();
+}
+async function dcPreview(btn){
+  const card = btn.closest('.cd-step');
+  const actionEl = card.querySelector('.cd-action-status');
+  const f = dcFieldsFromCard(btn);
+  const r = await fetch('/api/drip/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(f)});
+  const j = await r.json();
+  if (!r.ok) { actionEl.className = 'cd-action-status err'; actionEl.textContent = j.error || 'Preview failed.'; return; }
+  actionEl.className = 'cd-action-status'; actionEl.textContent = '';
+  document.getElementById('cd-preview-subject').textContent = j.subject || '(no subject)';
+  document.getElementById('cd-preview-body').textContent = j.body || '(no copy yet)';
+  const htmlWrap = document.getElementById('cd-preview-html-wrap');
+  if (j.body_html) {
+    htmlWrap.style.display = 'block';
+    document.getElementById('cd-preview-html-frame').srcdoc = j.body_html;
+  } else {
+    htmlWrap.style.display = 'none';
+  }
+  const onpageEl = document.getElementById('cd-preview-onpage');
+  if (j.onpage_title || j.onpage_copy) {
+    onpageEl.style.display = 'block';
+    document.getElementById('cd-preview-onpage-title').textContent = j.onpage_title || '(no on-page title yet)';
+    document.getElementById('cd-preview-onpage-copy').textContent = j.onpage_copy || '(no on-page marketing text yet)';
+  } else {
+    onpageEl.style.display = 'none';
+  }
+  document.getElementById('cd-preview-modal-backdrop').classList.add('open');
+}
+async function dcSendTest(btn){
+  const card = btn.closest('.cd-step');
+  const emailInput = card.querySelector('.cd-test-email');
+  const statusEl = card.querySelector('.cd-test-status');
+  const toEmail = emailInput.value.trim();
+  if (!toEmail) { statusEl.style.color = '#991B1B'; statusEl.textContent = 'Enter an email address first.'; return; }
+  const f = dcFieldsFromCard(btn);
+  f.to_email = toEmail;
+  statusEl.style.color = 'var(--gray-500)';
+  statusEl.textContent = 'Sending…';
+  const r = await fetch('/api/drip/test-send', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(f)});
+  const j = await r.json();
+  if (!r.ok) { statusEl.style.color = '#991B1B'; statusEl.textContent = j.error || 'Send failed.'; return; }
+  statusEl.style.color = '#166534';
+  statusEl.textContent = `Test sent to ${toEmail}.`;
+}
+</script>
+{% endblock %}

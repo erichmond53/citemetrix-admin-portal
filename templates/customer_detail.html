@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% import '_macros.html' as macros %}
+
+{% block title %}{{ data.user.display_name or data.user.user_email if data.user else 'Customer' }}{% endblock %}
+{% block page_title %}{{ data.user.display_name or data.user.user_email.split('@')[0] if data.user else 'Customer' }}{% endblock %}
+
+{% block topbar_actions %}
+<a href="/customers" class="btn btn-secondary">&larr; Back to list</a>
+{% if data.user %}
+<a href="https://citemetrix.com/wp-admin/user-edit.php?user_id={{ data.user.user_id }}" target="_blank" class="btn btn-primary" style="margin-left:8px;">
+    Open in WordPress &rarr;
+</a>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+
+{% if data.error %}
+<div class="alert alert-danger">{{ data.error }}</div>
+{% endif %}
+
+{% if data.user %}
+
+<!-- Account header -->
+<div class="card">
+    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:24px;">
+        <div>
+            <div class="stat-label">Email</div>
+            <div style="font-size:14px; font-weight:500; word-break:break-all;">{{ data.user.user_email }}</div>
+        </div>
+        <div>
+            <div class="stat-label">Member Since</div>
+            <div style="font-size:14px; font-weight:500;">
+                {{ data.user.user_registered.strftime('%b %d, %Y') if data.user.user_registered else '—' }}
+            </div>
+        </div>
+        <div>
+            <div class="stat-label">Current Tier</div>
+            <div>
+                {{ macros.subscription_badge(data.user.last_subscription_event, data.user.current_tier) }}
+            </div>
+        </div>
+        <div>
+            <div class="stat-label">User ID</div>
+            <div style="font-size:14px; font-weight:500; font-family:ui-monospace, monospace;">{{ data.user.user_id }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- 7-day activity stats -->
+<div class="grid grid-3" style="margin-bottom:24px;">
+    <div class="stat-card">
+        <div class="stat-label">API Calls (7d)</div>
+        <div class="stat-value">{{ data.scan_activity.total_7d }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Successful (7d)</div>
+        <div class="stat-value" style="color:var(--success);">{{ data.scan_activity.success_7d }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Errors (7d)</div>
+        <div class="stat-value" style="color:{% if data.scan_activity.error_7d > 0 %}var(--warning){% else %}var(--gray-400){% endif %};">{{ data.scan_activity.error_7d }}</div>
+    </div>
+</div>
+
+<!-- Error breakdown by category -->
+{% if data.error_breakdown %}
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Error Breakdown (7d)</h2></div>
+    <div style="display:flex; flex-wrap:wrap; gap:12px;">
+        {% for cat, cnt in data.error_breakdown.items() %}
+            {% if cat == 'internal' %}
+                <div style="padding:12px 16px; border-radius:8px; background:#fee2e2; min-width:140px;">
+                    <div style="font-size:11px; font-weight:600; color:#991b1b; text-transform:uppercase;">CiteMetrix Issue</div>
+                    <div style="font-size:24px; font-weight:700; color:#991b1b;">{{ cnt }}</div>
+                </div>
+            {% elif cat == 'upstream_quota' %}
+                <div style="padding:12px 16px; border-radius:8px; background:#fef3c7; min-width:140px;">
+                    <div style="font-size:11px; font-weight:600; color:#78350f; text-transform:uppercase;">Quota / Billing</div>
+                    <div style="font-size:24px; font-weight:700; color:#78350f;">{{ cnt }}</div>
+                </div>
+            {% elif cat == 'upstream_auth' %}
+                <div style="padding:12px 16px; border-radius:8px; background:#fef3c7; min-width:140px;">
+                    <div style="font-size:11px; font-weight:600; color:#78350f; text-transform:uppercase;">API Key Issue</div>
+                    <div style="font-size:24px; font-weight:700; color:#78350f;">{{ cnt }}</div>
+                </div>
+            {% elif cat == 'upstream_outage' %}
+                <div style="padding:12px 16px; border-radius:8px; background:#e0e7ff; min-width:140px;">
+                    <div style="font-size:11px; font-weight:600; color:#3730a3; text-transform:uppercase;">Platform Outage</div>
+                    <div style="font-size:24px; font-weight:700; color:#3730a3;">{{ cnt }}</div>
+                </div>
+            {% else %}
+                <div style="padding:12px 16px; border-radius:8px; background:var(--gray-100); min-width:140px;">
+                    <div style="font-size:11px; font-weight:600; color:var(--gray-600); text-transform:uppercase;">{{ cat | replace('_', ' ') | title }}</div>
+                    <div style="font-size:24px; font-weight:700; color:var(--gray-700);">{{ cnt }}</div>
+                </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Domains -->
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Domains ({{ data.domains | length }})</h2></div>
+    {% if data.domains %}
+    <table class="table">
+        <thead>
+            <tr><th>Domain</th><th>Status</th><th>Added</th><th>Last Scan</th></tr>
+        </thead>
+        <tbody>
+            {% for d in data.domains %}
+            <tr>
+                <td style="font-weight:500;">{{ d.domain }}</td>
+                <td>
+                    {% if d.status == 'active' %}
+                        <span class="badge badge-success">Active</span>
+                    {% else %}
+                        <span class="badge" style="background:var(--gray-100); color:var(--gray-600);">{{ d.status | title }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ d.created_at.strftime('%b %d, %Y') if d.created_at else '—' }}</td>
+                <td>
+                    {% if d.last_scan_at %}
+                        {{ d.last_scan_at.strftime('%b %d, %H:%M UTC') }}
+                    {% else %}
+                        <span style="color:var(--gray-400);">Never</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="padding:24px; text-align:center; color:var(--gray-500);">No domains configured</div>
+    {% endif %}
+</div>
+
+<!-- Recent errors -->
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Recent Errors</h2></div>
+    {% if data.recent_errors %}
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Domain</th>
+                <th>Platform</th>
+                <th>Category</th>
+                <th>Message</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in data.recent_errors %}
+            <tr>
+                <td style="white-space:nowrap; font-size:12px; color:var(--gray-600);">
+                    {{ e.created_at.strftime('%b %d, %H:%M') if e.created_at else '—' }}
+                </td>
+                <td>{{ e.domain or '—' }}</td>
+                <td>{{ e.platform }}</td>
+                <td>
+                    {% set cat = e.error_category %}
+                    {% if cat == 'internal' %}
+                        <span class="badge badge-danger">CiteMetrix Issue</span>
+                    {% elif cat == 'upstream_quota' %}
+                        <span class="badge badge-warning">Quota</span>
+                    {% elif cat == 'upstream_auth' %}
+                        <span class="badge badge-warning">Auth</span>
+                    {% elif cat == 'upstream_outage' %}
+                        <span class="badge badge-info">Outage</span>
+                    {% elif cat %}
+                        <span class="badge" style="background:var(--gray-100); color:var(--gray-600);">{{ cat | replace('_', ' ') | title }}</span>
+                    {% else %}
+                        <span class="badge" style="background:var(--gray-100); color:var(--gray-600);">—</span>
+                    {% endif %}
+                </td>
+                <td style="font-size:12px; color:var(--gray-600); max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ e.error_message | e }}">
+                    {{ e.error_message or '—' }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="padding:24px; text-align:center; color:var(--gray-500);">No recent errors</div>
+    {% endif %}
+</div>
+
+<!-- Activity (audit log) -->
+<div class="card">
+    <div class="card-header" style="display:flex; align-items:center; justify-content:space-between;">
+        <h2 class="card-title">Recent Activity</h2>
+        {% if data.recent_activity %}
+        <a href="/audit?user={{ data.user.user_id }}" style="font-size:13px; color:var(--primary); text-decoration:none;">View full audit trail &rarr;</a>
+        {% endif %}
+    </div>
+    {% if data.recent_activity %}
+    <table class="table">
+        <thead>
+            <tr>
+                <th style="width:120px;">When</th>
+                <th>Event</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ev in data.recent_activity %}
+            <tr>
+                <td style="white-space:nowrap; font-size:12px; color:var(--gray-600);">
+                    {{ ev.created_at.strftime('%b %d, %H:%M') if ev.created_at else '—' }}
+                </td>
+                <td>
+                    {% if ev.event_category == 'team' %}
+                        <span class="badge badge-info">Team</span>
+                    {% elif ev.event_category == 'data' %}
+                        <span class="badge" style="background:var(--gray-100); color:var(--gray-700);">Data</span>
+                    {% elif ev.event_category %}
+                        <span class="badge" style="background:var(--gray-100); color:var(--gray-700);">{{ ev.event_category | title }}</span>
+                    {% endif %}
+                    <div style="font-size:11px; color:var(--gray-500); margin-top:2px; font-family:ui-monospace, monospace;">{{ ev.event_type or '—' }}</div>
+                </td>
+                <td style="font-size:13px;">{{ ev.description or '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="padding:24px; text-align:center; color:var(--gray-500);">No activity recorded for this user</div>
+    {% endif %}
+</div>
+
+<!-- Subscription history -->
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Subscription History</h2></div>
+    {% if data.subscription_events %}
+    <table class="table">
+        <thead>
+            <tr><th>Date</th><th>Event</th><th>From</th><th>To</th></tr>
+        </thead>
+        <tbody>
+            {% for ev in data.subscription_events %}
+            <tr>
+                <td style="font-size:13px;">{{ ev.created_at.strftime('%b %d, %Y') if ev.created_at else '—' }}</td>
+                <td><span class="badge badge-info">{{ ev.event_type | replace('_', ' ') | title }}</span></td>
+                <td>{{ ev.from_tier or '—' }}</td>
+                <td>{{ ev.to_tier or '—' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="padding:24px; text-align:center; color:var(--gray-500);">No subscription events</div>
+    {% endif %}
+</div>
+
+{% endif %}
+
+{% endblock %}

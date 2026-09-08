@@ -1,0 +1,143 @@
+
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Login | CiteMetrix Admin</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+
+        :root { --primary: #4f46e5; --primary-dark: #4338ca; --gray-100: #f3f4f6; --gray-300: #d1d5db; --gray-400: #9ca3af; --gray-600: #4b5563; --gray-700: #374151; --gray-900: #111827; }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: linear-gradient(135deg, var(--gray-900) 0%, #1e1b4b 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+
+        .login-container { width: 100%; max-width: 420px; }
+
+        .login-header { text-align: center; margin-bottom: 32px; }
+
+        .logo { font-size: 32px; font-weight: 700; color: white; margin-bottom: 8px; }
+
+        .logo span { color: var(--primary); }
+
+        .login-subtitle { color: var(--gray-400); font-size: 14px; }
+
+        .login-card { background: white; border-radius: 16px; padding: 40px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
+
+        .login-title { font-size: 20px; font-weight: 600; margin-bottom: 24px; text-align: center; }
+
+        .form-group { margin-bottom: 20px; }
+
+        .form-label { display: block; font-size: 14px; font-weight: 500; color: var(--gray-700); margin-bottom: 6px; }
+
+        .form-input { width: 100%; padding: 12px 16px; border: 1px solid var(--gray-300); border-radius: 8px; font-size: 15px; font-family: inherit; transition: all 0.15s ease; }
+
+        .form-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1); }
+
+        .form-checkbox { display: flex; align-items: center; gap: 8px; }
+
+        .form-checkbox input { width: 16px; height: 16px; accent-color: var(--primary); }
+
+        .form-checkbox label { font-size: 14px; color: var(--gray-600); }
+
+        .btn-login { width: 100%; padding: 14px 20px; background: var(--primary); color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.15s ease; }
+
+        .btn-login:hover { background: var(--primary-dark); }
+
+        .error-message { background: #fee2e2; color: #991b1b; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+
+        .info-message { background: #dbeafe; color: #1e40af; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+
+    </style>
+
+</head>
+
+<body>
+
+    <div class="login-container">
+
+        <div class="login-header">
+
+            <div class="logo"><span>Cite</span>Metrix</div>
+
+            <div class="login-subtitle">Admin Portal</div>
+
+        </div>
+
+        <div class="login-card">
+
+            <h1 class="login-title">Sign in to your account</h1>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+
+            {% if messages %}
+
+                {% for category, message in messages %}
+
+                    {% if category == 'error' %}
+
+                    <div class="error-message">{{ message }}</div>
+
+                    {% else %}
+
+                    <div class="info-message">{{ message }}</div>
+
+                    {% endif %}
+
+                {% endfor %}
+
+            {% endif %}
+
+            {% endwith %}
+
+            <form method="POST">
+
+                <div class="form-group">
+
+                    <label class="form-label" for="username">Username</label>
+
+                    <input type="text" id="username" name="username" class="form-input" required autofocus>
+
+                </div>
+
+                <div class="form-group">
+
+                    <label class="form-label" for="password">Password</label>
+
+                    <input type="password" id="password" name="password" class="form-input" required>
+
+                </div>
+
+                <div class="form-group">
+
+                    <div class="form-checkbox">
+
+                        <input type="checkbox" id="remember" name="remember">
+
+                        <label for="remember">Remember me for 30 days</label>
+
+                    </div>
+
+                </div>
+
+                <button type="submit" class="btn-login">Sign in</button>
+
+            </form>
+
+        </div>
+
+    </div>
+
+</body>
+
+</html>
+

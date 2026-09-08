@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+
+{% block title %}Staff & Access{% endblock %}
+{% block page_title %}Staff & Access{% endblock %}
+
+{% block topbar_actions %}
+<button type="button" class="btn btn-primary" onclick="document.getElementById('invite-modal').style.display='flex'">
+    + Invite teammate
+</button>
+{% endblock %}
+
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, msg in messages %}
+    <div class="alert alert-{{ 'danger' if category == 'error' else category }}" style="margin-bottom:16px;">{{ msg }}</div>
+    {% endfor %}
+{% endwith %}
+
+{% if data.error %}
+<div class="alert alert-danger">{{ data.error }}</div>
+{% endif %}
+
+<!-- Pending invitations -->
+{% if data.invitations %}
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Pending Invitations ({{ data.invitations | length }})</h2></div>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Invited By</th>
+                <th>Sent</th>
+                <th>Expires</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for inv in data.invitations %}
+            <tr>
+                <td style="font-weight:500;">{{ inv.email }}</td>
+                <td><span class="badge badge-info">{{ inv.role | title }}</span></td>
+                <td>{{ inv.inviter_name or '—' }}</td>
+                <td style="font-size:13px; color:var(--gray-600);">{{ inv.created_at.strftime('%b %d, %H:%M') if inv.created_at else '—' }}</td>
+                <td style="font-size:13px; color:var(--gray-600);">{{ inv.expires_at.strftime('%b %d, %Y') if inv.expires_at else '—' }}</td>
+                <td>
+                    <form method="post" action="/team/invitations/{{ inv.id }}/revoke" style="display:inline;" onsubmit="return confirm('Revoke this invitation?');">
+                        <button type="submit" class="btn btn-secondary" style="padding:6px 12px; font-size:12px;">Revoke</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Team members -->
+<div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:24px 24px 0;">
+        <h2 class="card-title">Team Members ({{ data.members | selectattr('active') | list | length }} active)</h2>
+    </div>
+    {% if data.members %}
+    <table class="table" style="margin-top:16px;">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Last Login</th>
+                <th>Status</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in data.members %}
+            <tr style="{% if not m.active %}opacity:0.55;{% endif %}">
+                <td style="font-weight:500;">
+                    {{ m.name }}
+                    {% if m.id == current_user.id %}
+                    <span style="font-size:11px; color:var(--gray-500); margin-left:6px;">(you)</span>
+                    {% endif %}
+                </td>
+                <td style="font-size:13px;">{{ m.email }}</td>
+                <td>
+                    {% if m.id == current_user.id %}
+                        <span class="badge badge-success">{{ m.role | title }}</span>
+                    {% else %}
+                        <form method="post" action="/team/{{ m.id }}/role" style="display:inline;">
+                            <select name="role" onchange="this.form.submit()" style="padding:4px 8px; border:1px solid var(--gray-300); border-radius:6px; font-size:13px; background:white;">
+                                {% for r in ['admin', 'sales', 'marketing', 'support', 'operations'] %}
+                                <option value="{{ r }}" {% if m.role == r %}selected{% endif %}>{{ r | title }}</option>
+                                {% endfor %}
+                            </select>
+                        </form>
+                    {% endif %}
+                </td>
+                <td style="font-size:13px; color:var(--gray-600);">
+                    {% if m.last_login %}
+                        {{ m.last_login.strftime('%b %d, %H:%M') }}
+                    {% else %}
+                        <span style="color:var(--gray-400);">Never</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if m.active %}
+                        <span class="badge badge-success">Active</span>
+                    {% else %}
+                        <span class="badge" style="background:var(--gray-200); color:var(--gray-600);">Deactivated</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if m.id != current_user.id %}
+                        {% if m.active %}
+                        <form method="post" action="/team/{{ m.id }}/deactivate" style="display:inline;" onsubmit="return confirm('Deactivate {{ m.name }}? They will no longer be able to log in.');">
+                            <button type="submit" class="btn btn-secondary" style="padding:6px 12px; font-size:12px;">Deactivate</button>
+                        </form>
+                        {% else %}
+                        <form method="post" action="/team/{{ m.id }}/reactivate" style="display:inline;">
+                            <button type="submit" class="btn btn-secondary" style="padding:6px 12px; font-size:12px;">Reactivate</button>
+                        </form>
+                        {% endif %}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+<!-- Invite modal -->
+<div id="invite-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:white; padding:32px; border-radius:12px; max-width:480px; width:90%; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+        <h2 style="margin:0 0 8px; font-size:20px; font-weight:600;">Invite a teammate</h2>
+        <p style="margin:0 0 20px; font-size:13px; color:var(--gray-600);">
+            They'll receive an email with a link to set their password and log in.
+        </p>
+        <form method="post" action="/team/invite">
+            <div style="margin-bottom:16px;">
+                <label style="display:block; font-size:13px; font-weight:500; margin-bottom:6px;">Email</label>
+                <input type="email" name="email" required style="width:100%; padding:10px 14px; border:1px solid var(--gray-300); border-radius:8px; font-size:14px; font-family:inherit;" placeholder="sarah@example.com">
+            </div>
+            <div style="margin-bottom:24px;">
+                <label style="display:block; font-size:13px; font-weight:500; margin-bottom:6px;">Role</label>
+                <select name="role" required style="width:100%; padding:10px 14px; border:1px solid var(--gray-300); border-radius:8px; font-size:14px; font-family:inherit; background:white;">
+                    <option value="">— Select a role —</option>
+                    <option value="admin">Admin (full access)</option>
+                    <option value="operations">Operations</option>
+                    <option value="sales">Sales</option>
+                    <option value="marketing">Marketing</option>
+                    <option value="support">Customer Support</option>
+                </select>
+            </div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('invite-modal').style.display='none'">Cancel</button>
+                <button type="submit" class="btn btn-primary">Send invitation</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% endblock %}

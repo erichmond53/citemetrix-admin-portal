@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Customer Activity Log{% endblock %}
+{% block page_title %}Customer Activity Log{% endblock %}
+
+{% block content %}
+
+{% if data.error %}
+<div class="alert alert-danger">{{ data.error }}</div>
+{% endif %}
+
+{# Filter / summary header card #}
+<div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+        <div>
+            {% if data.user_filter %}
+                <div style="font-size:13px; color:var(--gray-500); margin-bottom:4px;">Filtered to user</div>
+                <div style="font-weight:600; font-size:15px;">
+                    {{ data.filtered_user_email or 'User #' ~ data.user_filter }}
+                    <span style="color:var(--gray-500); font-weight:400; font-size:13px;">(ID {{ data.user_filter }})</span>
+                </div>
+            {% else %}
+                <div style="font-size:13px; color:var(--gray-500); margin-bottom:4px;">All platform activity</div>
+                <div style="font-weight:600; font-size:15px;">{{ data.total }} events recorded</div>
+            {% endif %}
+        </div>
+
+        {% if data.user_filter %}
+        <a href="/audit" class="btn btn-secondary">Show all users</a>
+        {% endif %}
+    </div>
+</div>
+
+{# Events table #}
+<div class="card" style="padding:0; overflow:hidden;">
+    {% if data.events %}
+    <table class="table">
+        <thead>
+            <tr>
+                <th style="width:140px;">When</th>
+                <th>User</th>
+                <th>Event</th>
+                <th>Description</th>
+                <th style="width:120px;">IP</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ev in data.events %}
+            <tr>
+                <td style="white-space:nowrap; font-size:12px; color:var(--gray-600);">
+                    {{ ev.created_at.strftime('%b %d, %H:%M') if ev.created_at else '—' }}
+                    <div style="font-size:10px; color:var(--gray-400);">UTC</div>
+                </td>
+                <td>
+                    {% if ev.user_id %}
+                        <a href="/audit?user={{ ev.user_id }}" style="color:var(--gray-900); text-decoration:none; font-weight:500;">
+                            {{ ev.user_email or '—' }}
+                        </a>
+                        <div style="font-size:11px; color:var(--gray-500);">ID {{ ev.user_id }}</div>
+                    {% else %}
+                        <span style="color:var(--gray-400);">system</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if ev.event_category == 'team' %}
+                        <span class="badge badge-info">Team</span>
+                    {% elif ev.event_category == 'data' %}
+                        <span class="badge" style="background:var(--gray-100); color:var(--gray-700);">Data</span>
+                    {% elif ev.event_category %}
+                        <span class="badge" style="background:var(--gray-100); color:var(--gray-700);">{{ ev.event_category | title }}</span>
+                    {% endif %}
+                    <div style="font-size:12px; color:var(--gray-600); margin-top:2px; font-family:ui-monospace, monospace;">{{ ev.event_type or '—' }}</div>
+                </td>
+                <td style="font-size:13px;">
+                    {{ ev.description or '—' }}
+                    {% if ev.new_value or ev.old_value %}
+                    <details style="margin-top:4px;">
+                        <summary style="cursor:pointer; font-size:11px; color:var(--gray-500);">show details</summary>
+                        <div style="background:var(--gray-50); border-radius:6px; padding:8px; margin-top:6px; font-family:ui-monospace, monospace; font-size:11px; color:var(--gray-700); max-width:500px; overflow-x:auto;">
+                            {% if ev.old_value %}<div><strong>old:</strong> {{ ev.old_value }}</div>{% endif %}
+                            {% if ev.new_value %}<div><strong>new:</strong> {{ ev.new_value }}</div>{% endif %}
+                        </div>
+                    </details>
+                    {% endif %}
+                </td>
+                <td style="font-size:11px; color:var(--gray-500); font-family:ui-monospace, monospace;">
+                    {{ ev.ip_address or '—' }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="padding:48px; text-align:center; color:var(--gray-500);">
+        {% if data.user_filter %}
+            No activity recorded for this user
+        {% else %}
+            No audit events recorded yet
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{# Pagination — simple prev/next, no jump-to-page since 134 rows total
+   means at most 3 pages right now. Easy to extend later if volume grows. #}
+{% if data.total_pages > 1 %}
+<div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+    <div style="font-size:13px; color:var(--gray-600);">
+        Page {{ data.page }} of {{ data.total_pages }}
+        <span style="margin-left:8px; color:var(--gray-400);">
+            ({{ data.total }} total events)
+        </span>
+    </div>
+    <div style="display:flex; gap:8px;">
+        {% set qs_user = '&user=' ~ data.user_filter if data.user_filter else '' %}
+        {% if data.page > 1 %}
+            <a href="?page={{ data.page - 1 }}{{ qs_user }}" class="btn btn-secondary">&larr; Previous</a>
+        {% endif %}
+        {% if data.page < data.total_pages %}
+            <a href="?page={{ data.page + 1 }}{{ qs_user }}" class="btn btn-primary">Next &rarr;</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

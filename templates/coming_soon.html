@@ -1,0 +1,23 @@
+
+{% extends "base.html" %}
+
+{% block title %}{{ feature }}{% endblock %}
+
+{% block page_title %}{{ feature }}{% endblock %}
+
+{% block content %}
+
+<div class="card" style="text-align: center; padding: 80px 40px;">
+
+    <div style="font-size: 64px; margin-bottom: 24px;">Coming Soon</div>
+
+    <h2 style="font-size: 24px; font-weight: 600; margin-bottom: 12px;">{{ feature }}</h2>
+
+    <p style="color: var(--gray-500); font-size: 16px; max-width: 400px; margin: 0 auto 24px;">This feature is being built as part of Phase 2.</p>
+
+    <a href="/" class="btn btn-primary">Back to Overview</a>
+
+</div>
+
+{% endblock %}
+

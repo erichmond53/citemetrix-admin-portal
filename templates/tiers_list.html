@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Tiers{% endblock %}
+{% block page_title %}Tier Entitlements{% endblock %}
+
+{% block topbar_actions %}
+{% if current_user.role in ['admin', 'sales', 'support'] %}
+<a href="/tiers/new" class="btn btn-primary">+ New tier</a>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, msg in messages %}
+    <div class="alert alert-{{ 'danger' if category == 'error' else category }}" style="margin-bottom:16px;">{{ msg }}</div>
+    {% endfor %}
+{% endwith %}
+
+{% if data.error %}
+<div class="alert alert-danger">{{ data.error }}</div>
+{% endif %}
+
+<p style="color:var(--gray-600); font-size:13px; margin:0 0 16px;">
+    {{ data.total }} tier definitions — the source of truth for all plan gating,
+    read (cached) by the WordPress plugin. Plugin cache version:
+    <strong>{{ data.cache_version if data.cache_version is not none else '—' }}</strong>.
+</p>
+
+{% for track in data.tracks %}
+<div class="card" style="padding:0; overflow:hidden; margin-bottom:20px;">
+    <div class="card-header" style="padding:14px 18px;">
+        <h2 class="card-title">{{ track.label }}
+            <span style="color:var(--gray-500); font-weight:400;">({{ track.tiers | length }})</span>
+        </h2>
+    </div>
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Tier</th>
+                <th>Status</th>
+                <th style="text-align:right;">/mo</th>
+                <th style="text-align:right;">/yr</th>
+                <th style="text-align:right;">Domains</th>
+                <th style="text-align:right;">Queries</th>
+                <th style="text-align:right;">Seats</th>
+                <th style="text-align:right;">Comp.</th>
+                <th>WC Product</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in track.tiers %}
+            <tr>
+                <td>
+                    <a href="/tiers/{{ t.tier_key }}" style="font-weight:600; color:#2563eb; text-decoration:none;">{{ t.display_name }}</a>
+                    <span style="color:var(--gray-500); font-size:12px; margin-left:6px;">{{ t.tier_key }}</span>
+                </td>
+                <td>
+                    {% if t.is_active %}
+                    <span class="badge badge-info">Active</span>
+                    {% else %}
+                    <span style="color:var(--gray-500); font-size:12px;">Inactive</span>
+                    {% endif %}
+                </td>
+                <td style="text-align:right;">${{ '%.0f'|format(t.price_monthly) }}</td>
+                <td style="text-align:right;">${{ '%.0f'|format(t.price_annual) }}</td>
+                <td style="text-align:right;">{{ '∞' if t.max_domains == -1 else t.max_domains }}</td>
+                <td style="text-align:right;">
+                    {% if t.query_pool is not none %}
+                    {{ t.query_pool }} <span style="color:var(--gray-500); font-size:11px;">pool</span>
+                    {% else %}
+                    {{ t.max_queries_per_domain }} <span style="color:var(--gray-500); font-size:11px;">/dom</span>
+                    {% endif %}
+                </td>
+                <td style="text-align:right;">{{ t.max_seats }}</td>
+                <td style="text-align:right;">{{ '∞' if t.max_competitors_per_domain == -1 else t.max_competitors_per_domain }}</td>
+                <td>
+                    {% if t.wc_product_id %}
+                    #{{ t.wc_product_id }}
+                    {% else %}
+                    <span style="color:#b45309; font-size:12px;">unset</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+
+{% endblock %}

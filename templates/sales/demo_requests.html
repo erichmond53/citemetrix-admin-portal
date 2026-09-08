@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Booked Demos{% endblock %}
+{% block page_title %}Booked Demos{% endblock %}
+{% block content %}
+
+{% set upcoming = rows|selectattr('start_date')|selectattr('start_date','gt',now)|list %}
+
+<div class="grid grid-3" style="margin-bottom:24px;">
+  <div class="stat-card"><div class="stat-label">Total Bookings</div><div class="stat-value">{{ rows|length }}</div></div>
+  <div class="stat-card"><div class="stat-label">Upcoming</div><div class="stat-value" style="color:var(--primary);">{{ upcoming|length }}</div></div>
+  <div class="stat-card"><div class="stat-label">Approved</div><div class="stat-value" style="color:var(--success);">{{ rows|selectattr('status','equalto','approved')|list|length }}</div></div>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  <div style="overflow-x:auto;">
+  <table class="table">
+    <thead><tr><th>Demo Time</th><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Booked On</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr {% if r.start_date and r.start_date > now %}style="background:#f5f7ff;"{% endif %}>
+        <td style="white-space:nowrap;font-weight:500;color:var(--gray-800);">
+          {{ r.start_date.strftime('%Y-%m-%d %H:%M') if r.start_date else '&mdash;'|safe }}
+          {% if r.start_date and r.start_date > now %}<span class="badge badge-info" style="margin-left:6px;font-size:10px;">Upcoming</span>{% endif %}
+        </td>
+        <td style="font-weight:500;">{{ r.full_name or '&mdash;'|safe }}</td>
+        <td>{% if r.email %}<a href="mailto:{{ r.email }}" style="color:var(--primary);text-decoration:none;">{{ r.email }}</a>{% else %}&mdash;{% endif %}</td>
+        <td style="white-space:nowrap;color:var(--gray-600);">{{ r.phone or '&mdash;'|safe }}</td>
+        <td>
+          {% set st = r.status or 'unknown' %}
+          <span class="badge {{ 'badge-success' if st == 'approved' else ('badge-warning' if st == 'pending' else ('badge-danger' if st in ['cancelled','rejected'] else '')) }}" style="text-transform:capitalize;">{{ st }}</span>
+        </td>
+        <td style="white-space:nowrap;color:var(--gray-500);font-size:13px;">{{ r.booked_at.strftime('%Y-%m-%d') if r.booked_at else '&mdash;'|safe }}</td>
+      </tr>
+      {% if r.notes %}<tr><td></td><td colspan="5" style="color:var(--gray-500);font-size:13px;padding-top:0;">&#9432; {{ r.notes }}</td></tr>{% endif %}
+      {% endfor %}
+      {% if not rows %}<tr><td colspan="6" style="color:var(--gray-400);padding:24px;">No demo bookings yet.</td></tr>{% endif %}
+    </tbody>
+  </table>
+  </div>
+</div>
+<p style="color:var(--gray-400);font-size:12px;margin-top:12px;">Bookings come from the Bookly form on /book-demo/. Cancellations &amp; approvals are managed in WordPress (Bookly) for now.</p>
+
+{% endblock %}

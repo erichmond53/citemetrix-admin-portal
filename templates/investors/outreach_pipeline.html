@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Investor Outreach{% endblock %}
+{% block page_title %}Investor Outreach{% endblock %}
+{% block content %}
+<style>
+.op-table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--gray-200); border-radius:12px; overflow:hidden; }
+.op-table th { text-align:left; font-size:11px; text-transform:uppercase; color:var(--gray-500); padding:10px 14px; border-bottom:1px solid var(--gray-200); background:var(--gray-50,#F9FAFB); }
+.op-table td { padding:12px 14px; border-bottom:1px solid var(--gray-100); font-size:14px; vertical-align:top; }
+.op-table tr:last-child td { border-bottom:none; }
+.op-table tr:hover { background:#FAFBFC; }
+.op-status { display:inline-block; font-size:11px; font-weight:600; text-transform:uppercase; padding:3px 9px; border-radius:6px; }
+.op-status.not_started{background:#F3F4F6;color:#6B7280} .op-status.drafted{background:#EFF6FF;color:#1E40AF}
+.op-status.approved{background:#FEF3C7;color:#92400E} .op-status.sent{background:#E0E7FF;color:#3730A3}
+.op-status.opened{background:#DBEAFE;color:#1E3A8A} .op-status.replied{background:#D1FAE5;color:#065F46}
+.op-status.meeting{background:#DCFCE7;color:#166534} .op-status.passed{background:#FEE2E2;color:#991B1B}
+.op-status.committed{background:#BBF7D0;color:#14532D} .op-status.bounced{background:#FEE2E2;color:#991B1B}
+.op-status.do_not_contact{background:#F3F4F6;color:#374151}
+.op-empty { background:#fff; border:1px dashed var(--gray-300); border-radius:12px; padding:40px; text-align:center; color:var(--gray-500); }
+.op-link { color:var(--primary); text-decoration:none; font-weight:500; }
+.op-link:hover { text-decoration:underline; }
+</style>
+
+{% if error %}<div style="background:#FEF2F2;color:#991B1B;padding:12px 16px;border-radius:8px;margin-bottom:16px;">Error: {{ error }}</div>{% endif %}
+
+{% if threads %}
+<table class="op-table">
+    <thead><tr><th>Firm</th><th>Channel</th><th>Status</th><th>Latest subject</th><th>Next action</th><th>Updated</th></tr></thead>
+    <tbody>
+    {% for t in threads %}
+        <tr>
+            <td><a class="op-link" href="/investors#{{ t.investor_id }}" onclick="localStorage.setItem('op_open_investor', {{ t.investor_id }})">{{ t.firm_name }}</a></td>
+            <td>{{ t.channel }}</td>
+            <td><span class="op-status {{ t.status }}">{{ t.status.replace('_',' ') }}</span></td>
+            <td>{{ t.latest_subject or '—' }}</td>
+            <td>{{ t.next_action or '—' }}{% if t.next_action_at %} <span style="color:var(--gray-400);">({{ t.next_action_at }})</span>{% endif %}</td>
+            <td style="color:var(--gray-500);">{{ t.updated_at }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="op-empty">No outreach started yet. Open a firm in <a class="op-link" href="/investors">Investors</a> and click <b>Draft outreach email</b>.</div>
+{% endif %}
+
+<script>
+// If arriving from Investor Intel's own outreach flow, nothing to do here —
+// this page is read-only pipeline view; per-firm drafting lives on /investors.
+</script>
+{% endblock %}

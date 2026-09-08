@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block title %}Revenue{% endblock %}
+{% block page_title %}Revenue{% endblock %}
+
+{% block content %}
+
+{% if data.error %}
+<div class="alert alert-danger">{{ data.error }}</div>
+{% endif %}
+
+{% if data.pre_launch %}
+<!-- Pre-launch banner — shows when no paid subscribers exist yet -->
+<div style="background:linear-gradient(135deg, #4f46e5 0%, #4338ca 100%); color:white; border-radius:12px; padding:20px 24px; margin-bottom:24px; display:flex; align-items:center; gap:16px;">
+    <div style="font-size:24px;">&#128640;</div>
+    <div style="flex:1;">
+        <div style="font-weight:600; font-size:15px; margin-bottom:4px;">Pre-launch</div>
+        <div style="font-size:13px; opacity:0.9;">
+            Beta ends May 1, 2026. The numbers below show committed signups for May 1 activation rather than live revenue. MRR will populate automatically once paid subscriptions go live.
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Hero metrics — different content depending on launch state -->
+<div class="grid grid-4" style="margin-bottom:24px;">
+
+    {% if data.pre_launch %}
+
+    <!-- Pre-launch hero: committed signups, conversion rate, no MRR -->
+    <div class="stat-card">
+        <div class="stat-label">Committed for May 1</div>
+        <div class="stat-value" style="color:var(--success);">{{ data.stats.paid_subscribers }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Upgraded to a paid plan</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Beta Conversion Rate</div>
+        <div class="stat-value" style="color:{% if data.beta_conversion.conversion_rate >= 30 %}var(--success){% elif data.beta_conversion.conversion_rate >= 15 %}var(--warning){% else %}var(--danger){% endif %};">{{ data.beta_conversion.conversion_rate }}%</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">{{ data.beta_conversion.converted }} of {{ data.beta_conversion.total_signups }} beta signups</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Pending Cancellations</div>
+        <div class="stat-value" style="color:{% if data.stats.pending_cancel > 0 %}var(--danger){% else %}var(--gray-400){% endif %};">{{ data.stats.pending_cancel }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Cancelling at next renewal</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Active in 30d</div>
+        <div class="stat-value">{{ data.stats.active_users_30d }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Made an API call recently</div>
+    </div>
+
+    {% else %}
+
+    <!-- Live MRR hero: actual revenue, ARR, paid subscribers, churn -->
+    <div class="stat-card">
+        <div class="stat-label">MRR (Cash)</div>
+        <div class="stat-value" style="color:var(--success);">${{ "{:,.0f}".format(data.stats.mrr_discounted) }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">With BETA30 discount applied</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">MRR (Full Price)</div>
+        <div class="stat-value">${{ "{:,.0f}".format(data.stats.mrr_full) }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Once discounts roll off</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">ARR (Full Price)</div>
+        <div class="stat-value">${{ "{:,.0f}".format(data.stats.arr_full) }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Annualized run-rate</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Paid Subscribers</div>
+        <div class="stat-value">{{ data.stats.paid_subscribers }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">{{ data.stats.committed_users }} total committed</div>
+    </div>
+
+    {% endif %}
+
+</div>
+
+<!-- 30-day activity strip -->
+<div class="grid grid-4" style="margin-bottom:24px;">
+    <div class="stat-card">
+        <div class="stat-label">New (30d)</div>
+        <div class="stat-value" style="color:var(--success);">{{ data.stats.new_30d }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Cancellations (30d)</div>
+        <div class="stat-value" style="color:{% if data.stats.cancellations_30d > 0 %}var(--danger){% else %}var(--gray-400){% endif %};">{{ data.stats.cancellations_30d }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Net New (30d)</div>
+        <div class="stat-value" style="color:{% if data.stats.net_new_30d > 0 %}var(--success){% elif data.stats.net_new_30d < 0 %}var(--danger){% else %}var(--gray-700){% endif %};">{% if data.stats.net_new_30d > 0 %}+{% endif %}{{ data.stats.net_new_30d }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">API Cost (30d)</div>
+        <div class="stat-value" style="color:var(--gray-700);">${{ "{:,.2f}".format(data.api_costs.estimated_cost_30d) }}</div>
+        <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">{{ "{:,}".format(data.api_costs.total_calls_30d) }} calls</div>
+    </div>
+</div>
+
+<!-- Two-column section: tier breakdown + subscription event activity -->
+<div class="grid grid-2">
+
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Subscribers by Tier</h2></div>
+        {% if data.by_tier %}
+            {% for tier, info in data.by_tier.items() %}
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--gray-100);">
+                <div>
+                    <div style="font-weight:500; text-transform:capitalize;">{{ tier }}</div>
+                    <div style="font-size:12px; color:var(--gray-500);">{{ info.count }} subscriber{% if info.count != 1 %}s{% endif %}</div>
+                </div>
+                <div style="text-align:right;">
+                    {% if info.mrr_full > 0 %}
+                        <div style="font-weight:600; color:var(--success);">${{ "{:,.0f}".format(info.mrr_discounted) }}/mo</div>
+                        <div style="font-size:11px; color:var(--gray-400);">${{ "{:,.0f}".format(info.mrr_full) }} full price</div>
+                    {% else %}
+                        <div style="font-size:13px; color:var(--gray-400);">No tier pricing</div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+            {% if data.pre_launch %}
+            <div style="font-size:12px; color:var(--gray-500); padding-top:12px; font-style:italic;">
+                All current subscribers are on the &lsquo;beta&rsquo; tier. Tier-specific pricing activates after May 1.
+            </div>
+            {% endif %}
+        {% else %}
+            <div style="padding:24px; text-align:center; color:var(--gray-500);">No subscription data yet</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Subscription Activity (Lifetime)</h2></div>
+        {% set order = ['new_subscription', 'beta_converted', 'reactivated', 'payment_recovered', 'paused', 'pending_cancel', 'cancelled', 'expired', 'upgraded', 'downgraded'] %}
+        {% for event in order %}
+            {% if data.events_by_type.get(event) %}
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--gray-100); font-size:14px;">
+                <span style="color:var(--gray-600); text-transform:capitalize;">{{ event | replace('_', ' ') }}</span>
+                <span style="font-weight:500; color:{% if event in ['cancelled', 'expired', 'pending_cancel'] %}var(--danger){% elif event == 'paused' %}var(--warning){% else %}var(--gray-800){% endif %};">{{ data.events_by_type[event] }}</span>
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+
+</div>
+
+<!-- Acquisition by source -->
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Beta Signups by Source</h2></div>
+    {% if data.acquisition %}
+        {% for row in data.acquisition %}
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--gray-100); font-size:14px;">
+            <span style="font-weight:500;">{{ row.source }}</span>
+            <div style="display:flex; gap:24px;">
+                <span style="color:var(--gray-600);">{{ row.signups }} signups</span>
+                <span style="color:var(--success); font-weight:500;">{{ row.approved or 0 }} approved</span>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div style="padding:24px; text-align:center; color:var(--gray-500);">No acquisition data yet</div>
+    {% endif %}
+</div>
+
+{% endblock %}

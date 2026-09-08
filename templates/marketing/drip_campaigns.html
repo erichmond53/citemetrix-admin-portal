@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Drip Campaigns{% endblock %}
+{% block content %}
+<style>
+.dc-new { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px; margin-bottom:24px; display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+.dc-new .fg { flex:1; min-width:220px; }
+.dc-new label { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+.dc-new input { width:100%; padding:10px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box; }
+.dc-card { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px 20px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; }
+.dc-card a { text-decoration:none; color:inherit; }
+.dc-card h3 { margin:0 0 4px; font-size:16px; }
+.dc-meta { font-size:13px; color:var(--gray-500); }
+.dc-badge { font-size:11px; font-weight:600; text-transform:uppercase; padding:3px 10px; border-radius:6px; }
+.dc-badge.active { background:#D1FAE5; color:#065F46; }
+.dc-badge.paused { background:#F3F4F6; color:#6B7280; }
+</style>
+
+<div class="dc-new">
+  <div class="fg"><label>New campaign name</label><input type="text" id="dc-name" placeholder="e.g. Marblism cold outreach — wave 1"></div>
+  <button class="btn-p" style="background:var(--primary);color:#fff;border:none;padding:10px 18px;border-radius:8px;font-weight:500;cursor:pointer;" onclick="dcCreate()">Create campaign</button>
+</div>
+
+{% for c in campaigns %}
+<div class="dc-card">
+  <a href="/marketing/drip-campaigns/{{ c.id }}">
+    <h3>{{ c.name }} <span class="dc-badge {{ 'active' if c.active else 'paused' }}">{{ 'active' if c.active else 'paused' }}</span></h3>
+    <div class="dc-meta">{{ c.step_count }} step{{ 's' if c.step_count != 1 else '' }} · {{ c.enrolled_count }} enrolled ({{ c.active_count }} active, {{ c.completed_count }} completed){% if c.batch_name %} · seeded from "{{ c.batch_name }}"{% endif %}</div>
+  </a>
+</div>
+{% else %}
+<div class="card" style="text-align:center;color:var(--gray-500);padding:40px;">No campaigns yet. Create one above, then add steps and enroll a batch of leads.</div>
+{% endfor %}
+
+<script>
+async function dcCreate(){
+  const name = document.getElementById('dc-name').value.trim();
+  if (!name) return;
+  const r = await fetch('/api/drip/campaigns', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+  const j = await r.json();
+  if (r.ok) { window.location = '/marketing/drip-campaigns/' + j.campaign_id; }
+  else { alert(j.error || 'Failed to create campaign.'); }
+}
+</script>
+{% endblock %}

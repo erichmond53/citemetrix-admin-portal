@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}CS Alerts{% endblock %}
+{% block page_title %}CS Alerts{% endblock %}
+{% block content %}
+<style>
+.cs-intro { font-size: 13px; color: var(--gray-600); margin-bottom: 20px; line-height: 1.5; }
+.cs-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+.cs-stat { background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; padding: 18px 20px; }
+.cs-stat .num { font-size: 30px; font-weight: 700; line-height: 1; }
+.cs-stat .lbl { font-size: 12px; color: var(--gray-500); margin-top: 6px; }
+.cs-stat.user .num { color: var(--warning); }
+.cs-stat.ambiguous .num { color: var(--danger); }
+.cs-stat.zero .num { color: var(--gray-400); }
+
+.cs-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; overflow: hidden; }
+.cs-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--gray-500); padding: 12px 16px; background: var(--gray-50); border-bottom: 1px solid var(--gray-200); }
+.cs-table td { padding: 14px 16px; font-size: 13px; color: var(--gray-800); border-bottom: 1px solid var(--gray-100); vertical-align: top; }
+.cs-table tr:last-child td { border-bottom: none; }
+
+.cs-fault { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 3px 8px; border-radius: 10px; white-space: nowrap; }
+.cs-fault.user { background: #fef3c7; color: #92400e; }
+.cs-fault.ambiguous { background: #fee2e2; color: #991b1b; }
+.cs-disp { font-size: 11px; color: var(--gray-500); margin-top: 4px; }
+.cs-contact a { color: var(--primary); text-decoration: none; }
+.cs-contact .name { font-weight: 600; color: var(--gray-900); }
+.cs-when { font-size: 12px; color: var(--gray-500); white-space: nowrap; }
+
+.cs-empty { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 28px; text-align: center; color: #047857; }
+.cs-empty .big { font-size: 16px; font-weight: 700; color: #059669; margin-bottom: 4px; }
+.cs-err { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 14px 16px; color: #991b1b; font-size: 13px; margin-bottom: 20px; }
+</style>
+
+<div class="cs-intro">
+    Accounts with a problem worth knowing about, so you can decide whether to proactively reach out.
+    This view is situational awareness &mdash; the <strong>customer</strong> receives the alert with the
+    remediation steps (it&rsquo;s their fix to make). Each alert is tagged by fault domain so you can triage:
+    <strong>user</strong> = the account holder&rsquo;s to resolve; <strong>ambiguous</strong> = needs a look,
+    could be a pipeline issue on our side.
+</div>
+
+{% if data.error %}
+<div class="cs-err">Could not load all alerts: {{ data.error }}</div>
+{% endif %}
+
+<div class="cs-summary">
+    <div class="cs-stat {% if data.counts.byok_key_failing == 0 %}zero{% else %}user{% endif %}">
+        <div class="num">{{ data.counts.byok_key_failing }}</div>
+        <div class="lbl">BYOK key failing</div>
+    </div>
+    <div class="cs-stat {% if data.counts.domain_overdue == 0 %}zero{% else %}ambiguous{% endif %}">
+        <div class="num">{{ data.counts.domain_overdue }}</div>
+        <div class="lbl">Domain overdue / never scanned</div>
+    </div>
+    <div class="cs-stat {% if data.counts.stalled_onboarding == 0 %}zero{% else %}user{% endif %}">
+        <div class="num">{{ data.counts.stalled_onboarding }}</div>
+        <div class="lbl">Stalled onboarding</div>
+    </div>
+</div>
+
+{% if data.alerts %}
+<table class="cs-table">
+    <thead>
+        <tr>
+            <th>Fault</th>
+            <th>Problem</th>
+            <th>Account</th>
+            <th>Contact</th>
+            <th>When</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for a in data.alerts %}
+        <tr>
+            <td>
+                <span class="cs-fault {{ a.fault }}">{{ a.fault }}</span>
+                <div class="cs-disp">{{ a.disposition }}</div>
+            </td>
+            <td>{{ a.problem }}</td>
+            <td class="cs-contact"><span class="name">{{ a.account }}</span></td>
+            <td class="cs-contact">
+                {% if a.email and a.email != '(no email)' %}
+                    <a href="mailto:{{ a.email }}">{{ a.email }}</a>
+                {% else %}
+                    <span style="color:var(--gray-400);">{{ a.email }}</span>
+                {% endif %}
+            </td>
+            <td class="cs-when">{% if a.when %}{{ a.when }}{% else %}&mdash;{% endif %}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="cs-empty">
+    <div class="big">&#9989; No customer accounts need attention</div>
+    <div>No BYOK key failures, overdue domains, or stalled onboardings detected right now.</div>
+</div>
+{% endif %}
+{% endblock %}

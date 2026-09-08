@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}AI Platform APIs{% endblock %}
+{% block page_title %}AI Platform APIs{% endblock %}
+{% block content %}
+
+<div class="grid grid-4" style="margin-bottom:24px;">
+  <div class="stat-card"><div class="stat-label">Calls (24h)</div><div class="stat-value">{{ '{:,}'.format(d.calls_24h) }}</div></div>
+  <div class="stat-card"><div class="stat-label">Calls (7d)</div><div class="stat-value">{{ '{:,}'.format(d.calls_7d) }}</div></div>
+  <div class="stat-card">
+    <div class="stat-label">Error Rate (7d)</div>
+    <div class="stat-value" style="color:{{ 'var(--success)' if d.err_rate_7d < 5 else ('var(--warning)' if d.err_rate_7d < 15 else 'var(--danger)') }};">{{ d.err_rate_7d }}%</div>
+    <div style="font-size:11px;color:var(--gray-400);">{{ '{:,}'.format(d.errors_7d) }} errors</div>
+  </div>
+  <div class="stat-card"><div class="stat-label">Avg Response (7d)</div><div class="stat-value">{{ (d.avg_ms_7d/1000)|round(1) }}s</div></div>
+</div>
+
+<div class="card">
+  <div class="card-title" style="margin-bottom:12px;">Error Attribution (7 days) &mdash; SysOps triage</div>
+  <div class="grid grid-3">
+    <div class="stat-card"><div class="stat-label">Client BYOK key (quota / auth)</div><div class="stat-value">{{ '{:,}'.format(d.attrib.client) }}</div><div style="font-size:11px;color:var(--gray-400);">the client&#39;s key was capped or rejected &mdash; not ours</div></div>
+    <div class="stat-card"><div class="stat-label">Structural (categorized)</div><div class="stat-value" style="color:{{ 'var(--danger)' if d.attrib.structural > 0 else 'var(--success)' }};">{{ '{:,}'.format(d.attrib.structural) }}</div><div style="font-size:11px;color:var(--gray-400);">non-quota/auth categorized failures &mdash; ours to fix</div></div>
+    <div class="stat-card"><div class="stat-label">Uncategorized &mdash; review</div><div class="stat-value" style="color:{{ 'var(--warning)' if d.attrib.uncat > 0 else 'var(--gray-900)' }};">{{ '{:,}'.format(d.attrib.uncat) }}</div><div style="font-size:11px;color:var(--gray-400);">no error_category tag; may be structural</div></div>
+  </div>
+  <p style="font-size:12px;color:var(--gray-400);margin-top:10px;">Quota/auth errors are the account&#39;s responsibility (their BYOK key). Structural + uncategorized are where SysOps should look. <strong>Tagging <code>error_category</code> on every scan failure in the engine would let this separate structural-vs-client cleanly</strong> &mdash; a scan-engine improvement.</p>
+</div>
+
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px;">By Platform (30 days)</div>
+    <table class="table">
+      <thead><tr><th>Platform</th><th style="text-align:right;">Calls</th><th style="text-align:right;">Error %</th><th style="text-align:right;">Avg</th></tr></thead>
+      <tbody>
+        {% for p in d.by_platform %}
+        <tr>
+          <td style="text-transform:capitalize;font-weight:500;">{{ p.platform }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(p.calls) }}</td>
+          <td style="text-align:right;font-weight:600;color:{{ 'var(--success)' if p.err_rate < 5 else ('var(--warning)' if p.err_rate < 15 else 'var(--danger)') }};">{{ p.err_rate }}%</td>
+          <td style="text-align:right;color:var(--gray-500);">{{ (p.avg_ms/1000)|round(1) }}s</td>
+        </tr>
+        {% endfor %}
+        {% if not d.by_platform %}<tr><td colspan="4" style="color:var(--gray-400);">No usage data.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px;">Error Categories (30 days)</div>
+    <table class="table">
+      <thead><tr><th>Category</th><th style="text-align:right;">Count</th></tr></thead>
+      <tbody>
+        {% for e in d.error_cats %}
+        <tr><td><span class="badge badge-danger" style="font-family:monospace;">{{ e.cat }}</span></td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(e.n) }}</td></tr>
+        {% endfor %}
+        {% if not d.error_cats %}<tr><td colspan="2" style="color:var(--success);">No errors in window.</td></tr>{% endif %}
+      </tbody>
+    </table>
+    <p style="font-size:12px;color:var(--gray-400);margin:12px 0 0;"><code>upstream_quota</code> = the AI provider rate-limited / quota-capped the scan call; <code>upstream_auth</code> = a provider key was rejected.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title" style="margin-bottom:12px;">Daily Volume (14 days)</div>
+  <div style="overflow-x:auto;">
+  <table class="table">
+    <thead><tr><th>Date</th><th style="text-align:right;">Calls</th><th style="text-align:right;">Errors</th><th style="text-align:right;">Error %</th></tr></thead>
+    <tbody>
+      {% for r in d.daily %}
+      {% set er = (100*r.errors/r.calls)|round(1) if r.calls else 0 %}
+      <tr><td>{{ r.date }}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.calls) }}</td><td style="text-align:right;">{{ r.errors }}</td><td style="text-align:right;color:{{ 'var(--danger)' if er >= 15 else 'var(--gray-600)' }};">{{ er }}%</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% endblock %}

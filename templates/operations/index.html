@@ -1,0 +1,806 @@
+{% extends "base.html" %}
+{% block title %}Product Jobs{% endblock %}
+{% block page_title %}Product Jobs{% endblock %}
+{% block content %}
+<style>
+.lane-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+.lane-card { background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; padding: 20px; position: relative; }
+.lane-card.ok { border-left: 4px solid var(--success); }
+.lane-card.overdue { border-left: 4px solid var(--danger); }
+.lane-card.error { border-left: 4px solid var(--danger); }
+.lane-card.pending { border-left: 4px solid var(--warning); }
+.lane-card.unknown { border-left: 4px solid var(--gray-300); }
+.lane-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.lane-name { font-size: 15px; font-weight: 600; color: var(--gray-900); }
+.lane-interval { font-size: 11px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+.lane-status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+.lane-status-dot.ok { background: var(--success); }
+.lane-status-dot.overdue { background: var(--danger); }
+.lane-status-dot.error { background: var(--danger); }
+.lane-status-dot.pending { background: var(--warning); }
+.lane-status-dot.unknown { background: var(--gray-300); }
+.lane-desc { font-size: 12px; color: var(--gray-600); line-height: 1.5; margin-bottom: 14px; }
+.lane-last-fire { font-size: 13px; color: var(--gray-700); margin-bottom: 14px; padding: 10px 12px; background: var(--gray-50); border-radius: 6px; }
+.lane-last-fire strong { color: var(--gray-900); }
+.lane-last-fire .ago { color: var(--gray-500); font-size: 12px; margin-left: 4px; }
+.lane-jobs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.lane-job-stat { text-align: center; padding: 10px 6px; background: var(--gray-50); border-radius: 6px; }
+.lane-job-stat .num { font-size: 22px; font-weight: 700; line-height: 1; }
+.lane-job-stat .lbl { font-size: 10px; color: var(--gray-500); text-transform: uppercase; margin-top: 4px; letter-spacing: 0.04em; }
+.lane-job-stat.pending .num { color: var(--warning); }
+.lane-job-stat.running .num { color: var(--primary); }
+.lane-job-stat.failed .num { color: var(--danger); }
+.lane-job-stat.failed.zero .num { color: var(--gray-400); }
+
+.job-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+.job-card { background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; padding: 20px; }
+.job-card h3 { margin: 0 0 16px; font-size: 16px; display: flex; justify-content: space-between; align-items: center; }
+.job-card h3 .timeframe { font-size: 12px; font-weight: normal; color: var(--gray-500); }
+.job-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.job-stat { text-align: center; padding: 12px 8px; background: var(--gray-50); border-radius: 8px; }
+.job-stat .num { font-size: 24px; font-weight: 700; }
+.job-stat .lbl { font-size: 11px; color: var(--gray-500); text-transform: uppercase; margin-top: 2px; }
+.job-stat.pending .num { color: var(--warning); }
+.job-stat.running .num { color: var(--primary); }
+.job-stat.complete .num { color: var(--success); }
+.job-stat.failed .num { color: var(--danger); }
+.job-stat.cancelled .num { color: var(--gray-500); }
+
+.cron-table { width: 100%; border-collapse: collapse; }
+.cron-table th { text-align: left; padding: 12px 16px; background: var(--gray-50); font-size: 12px; text-transform: uppercase; color: var(--gray-500); }
+.cron-table td { padding: 12px 16px; border-bottom: 1px solid var(--gray-100); font-size: 14px; }
+.cron-table tr:hover { background: var(--gray-50); }
+.cron-table .lane-group-header td { background: var(--gray-100); color: var(--gray-700); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 16px; }
+.status-badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+.status-badge.ok { background: #DCFCE7; color: #166534; }
+.status-badge.overdue { background: #FEE2E2; color: #991B1B; }
+.status-badge.pending { background: #FEF9C3; color: #854D0E; }
+.status-badge.error { background: #FEE2E2; color: #991B1B; }
+.status-badge.unknown { background: #F3F4F6; color: #6B7280; }
+
+.error-table { width: 100%; border-collapse: collapse; }
+.error-table th { text-align: left; padding: 12px 16px; background: var(--gray-50); font-size: 12px; text-transform: uppercase; color: var(--gray-500); }
+.error-table td { padding: 12px 16px; border-bottom: 1px solid var(--gray-100); font-size: 13px; }
+.error-table tr:hover { background: var(--gray-50); }
+.error-table .error-msg { color: var(--danger); max-width: 400px; }
+.error-table .domain { font-weight: 500; }
+.error-table .user { color: var(--gray-500); font-size: 12px; }
+.error-table .time { color: var(--gray-500); white-space: nowrap; }
+
+.section-24h { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--gray-100); }
+.section-24h-title { font-size: 12px; color: var(--gray-500); margin-bottom: 8px; }
+.stats-24h { display: flex; gap: 16px; font-size: 13px; }
+.stats-24h span { display: flex; align-items: center; gap: 4px; }
+
+.refresh-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; font-size: 13px; color: var(--gray-500); }
+.refresh-bar .auto-refresh { display: flex; align-items: center; gap: 8px; }
+.refresh-bar .refresh-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); animation: pulse 2s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+/* Tabs — mirror the design language of the rest of the admin portal:
+   indigo accent on active, gray on inactive, simple bottom border for
+   the bar. The tabs sit in their own card-shaped container so they
+   visually align with the page gutter. */
+.tab-bar {
+    display: flex;
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 12px;
+    padding: 4px;
+    margin-bottom: 24px;
+    gap: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.tab-button {
+    flex: 1;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--gray-600);
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.15s, color 0.15s;
+    font-family: inherit;
+}
+.tab-button:hover { background: var(--gray-100); color: var(--gray-800); }
+.tab-button.active { background: var(--primary); color: white; }
+.tab-button.active:hover { background: var(--primary-dark); }
+.tab-button .count { font-size: 12px; opacity: 0.7; margin-left: 4px; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+</style>
+
+{% if messaging %}
+{% set mp = messaging %}
+{% set _sc = {'healthy':('var(--success)','#f0fdf4','Healthy'),'warn':('var(--warning)','#fffbeb','Degraded'),'critical':('var(--danger)','#fef2f2','Critical')} %}
+<div style="margin-bottom:24px;">
+  <h2 style="font-size:16px;font-weight:600;color:var(--gray-900);margin:0 0 14px;">Messaging Platform &mdash; PWA push alerts</h2>
+  <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;">
+
+    {% set d = mp.delivery %}{% set dc = _sc.get(d.status, _sc['critical']) %}
+    <div style="background:#fff;border:1px solid var(--gray-200);border-left:4px solid {{ dc[0] }};border-radius:12px;padding:18px 20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="font-size:15px;font-weight:600;color:var(--gray-900);">Delivery &middot; app.citemetrix.com</div>
+        <span style="font-size:12px;font-weight:600;color:{{ dc[0] }};background:{{ dc[1] }};padding:3px 10px;border-radius:999px;">{{ dc[2] }}</span>
+      </div>
+      <div style="font-size:12px;color:var(--gray-500);margin-bottom:14px;">Static PWA + service worker that <em>receive</em> the push alerts.</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr><td style="padding:5px 0;color:var(--gray-600);">nginx</td><td style="text-align:right;font-weight:600;color:{{ 'var(--success)' if d.box.nginx=='active' else 'var(--danger)' }};">{{ d.box.nginx|default('?') }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-600);">App shell / SW / manifest</td><td style="text-align:right;font-weight:600;color:{{ 'var(--success)' if (d.endpoints['/']==200 and d.endpoints['/service-worker.js']==200 and d.endpoints['/manifest.json']==200) else 'var(--danger)' }};">{{ d.endpoints['/'] }} / {{ d.endpoints['/service-worker.js'] }} / {{ d.endpoints['/manifest.json'] }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-600);">SSL cert</td><td style="text-align:right;font-weight:600;color:{{ 'var(--danger)' if (d.ssl_days_left or 0) < 14 else 'var(--gray-800)' }};">{{ d.ssl_days_left }} days left</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-600);">Disk / mem / load</td><td style="text-align:right;color:var(--gray-700);">{{ d.box.disk_pct }}% &middot; {{ d.box.mem_avail_mb }}MB &middot; {{ d.box.load1 }}</td></tr>
+      </table>
+    </div>
+
+    {% set p = mp.dispatch %}{% set pc = _sc.get(p.status, _sc['critical']) %}
+    <div style="background:#fff;border:1px solid var(--gray-200);border-left:4px solid {{ pc[0] }};border-radius:12px;padding:18px 20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="font-size:15px;font-weight:600;color:var(--gray-900);">Dispatch &middot; bitnami PRD</div>
+        <span style="font-size:12px;font-weight:600;color:{{ pc[0] }};background:{{ pc[1] }};padding:3px 10px;border-radius:999px;">{{ pc[2] }}</span>
+      </div>
+      <div style="font-size:12px;color:var(--gray-500);margin-bottom:14px;">Alert dispatcher (Fast Lane) + web-push <em>send</em> path.</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr><td style="padding:5px 0;color:var(--gray-600);">Fast Lane last fire</td><td style="text-align:right;font-weight:600;color:{{ 'var(--success)' if (p.fast_lane_age_sec is not none and p.fast_lane_age_sec < 180) else 'var(--danger)' }};">{% if p.fast_lane_age_sec is not none %}{{ p.fast_lane_age_sec }}s ago{% else %}unknown{% endif %}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-600);">web-push vendor</td><td style="text-align:right;font-weight:600;color:{{ 'var(--success)' if p.vendor.webpush_vendor=='present' else 'var(--danger)' }};">{{ p.vendor.webpush_vendor|default('?') }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-600);">VAPID keypair</td><td style="text-align:right;font-weight:600;color:{{ 'var(--success)' if p.vapid_present=='yes' else 'var(--danger)' }};">{{ p.vapid_present }}</td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-600);">Active subscriptions</td><td style="text-align:right;font-weight:600;">{{ p.active_subs }} <span style="color:var(--gray-400);font-weight:400;">/ {{ p.total_subs }} total</span></td></tr>
+        <tr><td style="padding:5px 0;color:var(--gray-600);">Last push &middot; failing subs</td><td style="text-align:right;color:var(--gray-700);">{{ p.last_push_at }} &middot; {{ p.failing_subs }}</td></tr>
+      </table>
+    </div>
+
+  </div>
+  <p style="font-size:11px;color:var(--gray-400);margin:8px 0 0;">Updated {{ mp.generated }} &middot; scan completes &rarr; dispatcher evaluates triggers &rarr; web-push (VAPID) &rarr; service worker on app.citemetrix.com. Only the delivery/dispatch checks live here; a healthy card means the pipe is open, not that an alert is currently due.</p>
+</div>
+{% endif %}
+
+
+{% if data.error %}<div class="alert alert-danger">{{ data.error }}</div>{% endif %}
+
+{# ──── Active Ops Alerts ─────────────────────────────────────────────────
+   Shown at the top of the page because ops alerts need attention — they
+   represent things like users hitting runaway-scan caps or other
+   conditions warranting review. Sorted severity-desc, oldest-first
+   within each severity. ─────────────────────────────────────────────── #}
+{% if data.alerts_error %}
+<div class="alert alert-warning" style="margin-bottom: 16px;">
+    <strong>Alerts:</strong> {{ data.alerts_error }}
+</div>
+{% endif %}
+{% if data.active_alerts %}
+<div style="background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:20px; margin-bottom:24px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2 style="font-size:16px; font-weight:600; color:var(--gray-900); margin:0;">
+            🔔 Active Alerts
+            <span style="background:var(--danger); color:white; font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px; margin-left:6px;">{{ data.active_alerts | length }}</span>
+        </h2>
+    </div>
+    {% for alert in data.active_alerts %}
+    {% set sev_color = 'var(--danger)' if alert.severity == 'critical' else ('var(--warning)' if alert.severity == 'warn' else 'var(--gray-500)') %}
+    <div id="alert-row-{{ alert.id }}" style="display:grid; grid-template-columns: 80px 1fr 140px auto; gap:16px; padding:12px; border-top:1px solid var(--gray-100); align-items:center;">
+        <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:{{ sev_color }};">
+            {{ alert.severity }}
+        </div>
+        <div>
+            <div style="font-size:12px; color:var(--gray-500); margin-bottom:2px;">{{ alert.alert_type }}</div>
+            <div style="font-size:14px; color:var(--gray-900);">{{ alert.message }}</div>
+            {% if alert.user_email %}
+            <div style="font-size:12px; color:var(--gray-500); margin-top:2px;">User: {{ alert.user_email }} (ID {{ alert.user_id }})</div>
+            {% endif %}
+        </div>
+        <div style="font-size:12px; color:var(--gray-500);">{{ alert.created_at.strftime('%b %d, %H:%M UTC') if alert.created_at else '' }}</div>
+        <div>
+            <button onclick="acknowledgeAlert({{ alert.id }})" style="background:var(--gray-100); border:1px solid var(--gray-200); color:var(--gray-700); font-size:12px; padding:6px 12px; border-radius:6px; cursor:pointer;">Acknowledge</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+<script>
+function acknowledgeAlert(alertId) {
+    fetch('/api/alerts/' + alertId + '/acknowledge', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+            if (d.success) {
+                var row = document.getElementById('alert-row-' + alertId);
+                if (row) row.style.display = 'none';
+            } else {
+                alert('Failed to acknowledge: ' + (d.error || 'unknown error'));
+            }
+        })
+        .catch(e => alert('Network error: ' + e));
+}
+</script>
+{% endif %}
+
+<div class="refresh-bar">
+    <div>Data refreshes on page load. Last loaded: {{ now().strftime('%b %d, %H:%M:%S UTC') if now else '-' }}</div>
+    <div class="auto-refresh">
+        <span class="refresh-dot"></span>
+        <span>Auto-refresh every 60s</span>
+    </div>
+</div>
+
+{# ──── Tab navigation ─────────────────────────────────────────────────
+   Four tabs split the page into focused views. Default is Cron Lanes
+   (the broadest health overview). The active tab is preserved across
+   the auto-refresh via the ?tab= URL param so the page doesn't snap
+   back to Cron Lanes every minute when the user is looking at, say,
+   Recent Errors. ─────────────────────────────────────────────────── #}
+<div class="tab-bar" role="tablist">
+    <button type="button" class="tab-button" data-tab="pipeline" role="tab">Scan Pipeline
+        {% if data.v2.stuck_runs %}<span class="count" style="color:var(--danger)">⚠ {{ data.v2.stuck_runs|length }}</span>{% endif %}
+    </button>
+    <button type="button" class="tab-button" data-tab="cron" role="tab">Cron Lanes <span class="count">v1</span></button>
+    <button type="button" class="tab-button" data-tab="database" role="tab">Database Health</button>
+    <button type="button" class="tab-button" data-tab="errors" role="tab">
+        Recent Errors
+        {% if data.recent_errors %}<span class="count">({{ data.recent_errors | length }})</span>{% endif %}
+    </button>
+    <button type="button" class="tab-button" data-tab="jobs" role="tab">Job Queues</button>
+</div>
+
+<div class="tab-content" data-tab="pipeline">
+    {% if data.v2.error %}
+    <div class="lane-card error" style="margin-bottom:20px;">
+        <div class="lane-name">Pipeline data unavailable</div>
+        <div class="lane-desc">{{ data.v2.error }}</div>
+    </div>
+    {% endif %}
+
+    <!-- Phase B: fetcher fleet + queue depths (AWS APIs) -->
+    {% set inf = data.infra %}
+    <div class="lane-grid" style="grid-template-columns: repeat(2, 1fr); margin-bottom:20px;">
+        <div class="lane-card {% if inf.fetcher.running and inf.fetcher.running == inf.fetcher.desired %}ok{% elif inf.error %}unknown{% else %}pending{% endif %}">
+            <div class="lane-header"><div class="lane-name">Fetcher fleet</div></div>
+            {% if inf.fetcher.running is not none and inf.fetcher.running is defined and not inf.error %}
+            <div class="lane-jobs">
+                <div class="lane-job-stat"><div class="num">{{ inf.fetcher.running if inf.fetcher.running is not none else '—' }}</div><div class="lbl">Running</div></div>
+                <div class="lane-job-stat"><div class="num">{{ inf.fetcher.desired if inf.fetcher.desired is not none else '—' }}</div><div class="lbl">Desired</div></div>
+                <div class="lane-job-stat"><div class="num">{{ inf.fetcher.pending if inf.fetcher.pending is not none else 0 }}</div><div class="lbl">Pending</div></div>
+            </div>
+            {% else %}
+            <div class="lane-desc">Fleet status unavailable{% if inf.error %} — {{ inf.error }}{% endif %}{% if not inf.error %} (AWS access not yet configured for the portal — Phase B IAM).{% endif %}</div>
+            {% endif %}
+        </div>
+        <div class="lane-card {% if inf.queues and not inf.error %}ok{% else %}unknown{% endif %}">
+            <div class="lane-header"><div class="lane-name">Queue depths</div></div>
+            {% if inf.queues and not inf.error %}
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead><tr style="text-align:left;color:var(--gray-500);font-size:10px;text-transform:uppercase;">
+                    <th style="padding:4px 6px;">Queue</th><th style="padding:4px 6px;">Waiting</th><th style="padding:4px 6px;">In flight</th>
+                </tr></thead>
+                <tbody>
+                {% for q in inf.queues %}
+                    <tr style="border-top:1px solid var(--gray-100);{% if q.is_dlq and q.visible %}background:rgba(220,38,38,0.06);{% endif %}">
+                        <td style="padding:4px 6px;{% if q.is_dlq %}color:var(--danger);{% endif %}">{{ q.name|replace('citemetrix-','') }}</td>
+                        <td style="padding:4px 6px;{% if q.is_dlq and q.visible %}color:var(--danger);font-weight:600;{% endif %}">{{ q.visible if q.visible is not none else '?' }}</td>
+                        <td style="padding:4px 6px;">{{ q.in_flight if q.in_flight is not none else '?' }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="lane-desc">Queue depths unavailable{% if inf.error %} — {{ inf.error }}{% endif %}{% if not inf.error %} (AWS access not yet configured — Phase B IAM).{% endif %}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Panel 3 (top): 24h completion health — the SLA signal -->
+    {% set c = data.v2.completion_24h %}
+    <div class="lane-grid" style="grid-template-columns: repeat(4, 1fr);">
+        <div class="lane-card {% if c.in_progress and not c.completed %}pending{% else %}ok{% endif %}">
+            <div class="lane-interval">Runs (24h)</div>
+            <div class="lane-job-stat"><div class="num">{{ c.total or 0 }}</div></div>
+        </div>
+        <div class="lane-card ok">
+            <div class="lane-interval">Completed</div>
+            <div class="lane-job-stat"><div class="num" style="color:var(--success)">{{ c.completed or 0 }}</div></div>
+        </div>
+        <div class="lane-card {% if c.in_progress %}pending{% else %}ok{% endif %}">
+            <div class="lane-interval">In progress</div>
+            <div class="lane-job-stat"><div class="num" style="color:var(--warning)">{{ c.in_progress or 0 }}</div></div>
+        </div>
+        <div class="lane-card ok">
+            <div class="lane-interval">Avg complete</div>
+            <div class="lane-job-stat"><div class="num">{{ c.avg_complete_min if c.avg_complete_min is not none else '—' }}<span style="font-size:13px;color:var(--gray-500)"> min</span></div></div>
+        </div>
+    </div>
+
+    <!-- Panel 2: stuck runs (the would've-caught-the-stall panel) -->
+    {% if data.v2.stuck_runs %}
+    <div class="lane-card error" style="margin-bottom:20px;">
+        <div class="lane-header"><div class="lane-name">⚠ {{ data.v2.stuck_runs|length }} stuck run(s) — started but never completed (&gt; 6h)</div></div>
+        <div class="lane-desc">These never reached completion (fetched+failed ≥ enqueued AND analyzed ≥ fetched). Same signal the scheduler health check alerts on.</div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr style="text-align:left;color:var(--gray-500);font-size:11px;text-transform:uppercase;">
+                <th style="padding:6px 8px;">Domain</th><th style="padding:6px 8px;">Enq</th><th style="padding:6px 8px;">Fetched</th><th style="padding:6px 8px;">Analyzed</th><th style="padding:6px 8px;">Failed</th><th style="padding:6px 8px;">Age (min)</th>
+            </tr></thead>
+            <tbody>
+            {% for r in data.v2.stuck_runs %}
+                <tr style="border-top:1px solid var(--gray-100);">
+                    <td style="padding:8px;">{{ r.domain_id }}</td><td style="padding:8px;">{{ r.enqueued_count }}</td>
+                    <td style="padding:8px;">{{ r.fetched_count }}</td><td style="padding:8px;">{{ r.analyzed_count }}</td>
+                    <td style="padding:8px;color:var(--danger);">{{ r.failed_count }}</td><td style="padding:8px;">{{ r.mins }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="lane-card ok" style="margin-bottom:20px;">
+        <div class="lane-name"><span class="lane-status-dot ok"></span>No stuck runs</div>
+        <div class="lane-desc">All runs are either in progress or completed. Nothing hung past the 6h threshold.</div>
+    </div>
+    {% endif %}
+
+    <!-- Panel 1: active & recent runs (last 6h) -->
+    <div class="lane-card" style="margin-bottom:20px;">
+        <div class="lane-header"><div class="lane-name">Recent scan runs (last 6h)</div></div>
+        {% if data.v2.active_runs %}
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr style="text-align:left;color:var(--gray-500);font-size:11px;text-transform:uppercase;">
+                <th style="padding:6px 8px;">Domain</th><th style="padding:6px 8px;">Progress</th><th style="padding:6px 8px;">Enq</th>
+                <th style="padding:6px 8px;">Fet</th><th style="padding:6px 8px;">Ana</th><th style="padding:6px 8px;">Fail</th>
+                <th style="padding:6px 8px;">Status</th><th style="padding:6px 8px;">Min</th>
+            </tr></thead>
+            <tbody>
+            {% for r in data.v2.active_runs %}
+                <tr style="border-top:1px solid var(--gray-100);">
+                    <td style="padding:8px;">{{ r.domain_id }}</td>
+                    <td style="padding:8px;min-width:90px;">
+                        <div style="background:var(--gray-100);border-radius:4px;height:8px;width:80px;overflow:hidden;display:inline-block;vertical-align:middle;">
+                            <div style="height:8px;width:{{ r.pct }}%;background:{% if r.is_complete %}var(--success){% else %}var(--primary){% endif %};"></div>
+                        </div>
+                        <span style="font-size:11px;color:var(--gray-500);margin-left:4px;">{{ r.pct }}%</span>
+                    </td>
+                    <td style="padding:8px;">{{ r.enqueued_count }}</td><td style="padding:8px;">{{ r.fetched_count }}</td>
+                    <td style="padding:8px;">{{ r.analyzed_count }}</td>
+                    <td style="padding:8px;{% if r.has_failures %}color:var(--danger);{% endif %}">{{ r.failed_count }}</td>
+                    <td style="padding:8px;">
+                        {% if r.is_complete %}<span style="color:var(--success);">✓ complete</span>
+                        {% else %}<span style="color:var(--warning);">running</span>{% endif %}
+                    </td>
+                    <td style="padding:8px;color:var(--gray-500);">{{ r.mins }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="lane-desc">No scan runs in the last 6 hours.</div>
+        {% endif %}
+    </div>
+
+    <!-- Panel 4: quota / failure rollup -->
+    <div class="lane-card">
+        <div class="lane-header"><div class="lane-name">Platform failures (24h)</div></div>
+        {% if data.v2.quota_rollup %}
+        <div class="lane-desc">Incomplete platform fetches by reason — which keys are over quota. Feeds the customer-facing "platform incomplete" surfacing.</div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead><tr style="text-align:left;color:var(--gray-500);font-size:11px;text-transform:uppercase;">
+                <th style="padding:6px 8px;">Platform</th><th style="padding:6px 8px;">Failures</th><th style="padding:6px 8px;">Reason</th>
+            </tr></thead>
+            <tbody>
+            {% for p in data.v2.quota_rollup %}
+                <tr style="border-top:1px solid var(--gray-100);">
+                    <td style="padding:8px;font-weight:600;">{{ p.platform }}</td>
+                    <td style="padding:8px;color:var(--danger);">{{ p.count }}</td>
+                    <td style="padding:8px;color:var(--gray-600);">{{ p.reason }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="lane-desc"><span class="lane-status-dot ok"></span>No platform failures in the last 24h.</div>
+        {% endif %}
+    </div>
+    <!-- Panel 5: competitor-scan batch (async Anthropic Batch API, migrated off-box) -->
+    <div style="margin-top:26px;margin-bottom:10px;font-size:14px;font-weight:600;color:var(--gray-900);">Competitor-scan Batch <span style="font-weight:400;color:var(--gray-500);font-size:12px;">&mdash; async Anthropic Batch API (off-box)</span></div>
+    {% set cb = data.competition_batch %}
+    {% if cb %}
+    <div class="lane-grid" style="grid-template-columns: repeat(4, 1fr);">
+        <div class="lane-card {% if cb.status == 'error' %}error{% elif cb.status == 'warn' %}pending{% else %}ok{% endif %}">
+            <div class="lane-interval">Last batch</div>
+            <div class="lane-job-stat"><div class="num" style="font-size:15px;">{{ cb.last_completed_at.strftime('%b %d %H:%M') if cb.last_completed_at else '—' }}<span style="font-size:12px;color:var(--gray-500)"> UTC</span></div></div>
+        </div>
+        <div class="lane-card ok">
+            <div class="lane-interval">Items applied</div>
+            <div class="lane-job-stat"><div class="num">{{ cb.last_items or 0 }}</div></div>
+        </div>
+        <div class="lane-card {% if cb.last_apply_ms and cb.last_apply_ms > 10000 %}pending{% else %}ok{% endif %}">
+            <div class="lane-interval">Apply time</div>
+            <div class="lane-job-stat"><div class="num">{{ (cb.last_apply_ms / 1000) | round(1) if cb.last_apply_ms is not none else '—' }}<span style="font-size:13px;color:var(--gray-500)"> s</span></div></div>
+        </div>
+        <div class="lane-card {% if cb.fail_pct_24h >= 20 and cb.done_items_24h >= 5 %}error{% elif cb.failed_items_24h > 0 %}pending{% else %}ok{% endif %}">
+            <div class="lane-interval">Failed (24h)</div>
+            <div class="lane-job-stat"><div class="num" style="{% if cb.failed_items_24h > 0 %}color:var(--danger){% endif %}">{{ cb.failed_items_24h or 0 }}<span style="font-size:12px;color:var(--gray-500)">/{{ cb.done_items_24h or 0 }}</span></div></div>
+        </div>
+    </div>
+    {% if cb.stuck %}
+    <div class="lane-card error" style="margin-top:12px;">
+        <div class="lane-name">&#9888; {{ cb.stuck }} batch(es) stuck &gt; 6h</div>
+        <div class="lane-desc">A batch has been accumulating/submitted/polling for over 6 hours &mdash; check the phpworker service and the Anthropic batch status.</div>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="lane-card ok" style="margin-top:4px;">
+        <div class="lane-desc"><span class="lane-status-dot ok"></span>No competitor-scan batch has completed yet &mdash; populates after the daily 08:00 UTC run.</div>
+    </div>
+    {% endif %}
+
+</div><!-- /tab-content pipeline -->
+
+<div class="tab-content" data-tab="cron">
+
+<div class="lane-grid">
+    {% for lane_key in ['fast', 'slow', 'digest'] %}
+    {% set lane = data.lanes[lane_key] %}
+    {% if lane %}
+    <div class="lane-card {{ lane.status }}">
+        <div class="lane-header">
+            <div>
+                <div class="lane-name">
+                    <span class="lane-status-dot {{ lane.status }}"></span>{{ lane.display_name }}
+                </div>
+                <div class="lane-interval">{{ lane.interval_desc }}</div>
+            </div>
+            <span class="status-badge {{ lane.status }}">{{ lane.status | capitalize }}</span>
+        </div>
+        <div class="lane-desc">{{ lane.description }}</div>
+        <div class="lane-last-fire">
+            {% if lane.last_fire %}
+                <strong>Last fire:</strong> {{ lane.last_fire.strftime('%b %d, %H:%M') }}
+                <span class="ago">({{ lane.last_fire_minutes_ago }}m ago)</span>
+            {% else %}
+                <strong>Last fire:</strong> <span style="color: var(--gray-500);">never observed</span>
+            {% endif %}
+        </div>
+        <div class="lane-jobs">
+            <div class="lane-job-stat pending">
+                <div class="num">{{ data.job_queues_by_lane[lane_key].pending or 0 }}</div>
+                <div class="lbl">Pending</div>
+            </div>
+            <div class="lane-job-stat running">
+                <div class="num">{{ data.job_queues_by_lane[lane_key].running or 0 }}</div>
+                <div class="lbl">Running</div>
+            </div>
+            <div class="lane-job-stat failed {% if (data.job_queues_by_lane[lane_key].failed or 0) == 0 %}zero{% endif %}"
+                 {% if (data.job_queues_by_lane[lane_key].failed or 0) > 0 and data.failed_jobs_detail %}
+                 onclick="document.getElementById('failed-jobs-detail').scrollIntoView({behavior:'smooth'}); document.getElementById('failed-jobs-detail').open = true;"
+                 style="cursor:pointer;" title="Click to see failure detail"
+                 {% endif %}>
+                <div class="num">{{ data.job_queues_by_lane[lane_key].failed or 0 }}</div>
+                <div class="lbl">Failed ({{ data.job_queues_by_lane[lane_key].failed_window_hours or 24 }}h){% if (data.job_queues_by_lane[lane_key].failed or 0) > 0 and data.failed_jobs_detail %} &#9432;{% endif %}</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+
+{% if data.failed_jobs_detail %}
+<details id="failed-jobs-detail" class="card" style="margin-bottom: 24px;">
+    <summary style="cursor:pointer; font-weight:600; padding:4px 0;">
+        Failed jobs detail (last 24h) — {{ data.failed_jobs_detail|length }}
+        <span style="font-weight:400; color:var(--gray-500); font-size:13px;">— click a failure tile above, or expand here</span>
+    </summary>
+    <div style="margin-top:12px; font-size:13px; color:var(--gray-600);">
+        <span style="color:var(--gray-500);">error_category</span> classifies the failure:
+        <code>upstream_outage</code> / transient = external service issue (usually noise);
+        anything else may warrant a look.
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;">
+        <thead><tr style="text-align:left;color:var(--gray-500);font-size:11px;text-transform:uppercase;">
+            <th style="padding:6px 8px;">When</th>
+            <th style="padding:6px 8px;">Domain</th>
+            <th style="padding:6px 8px;">Job type</th>
+            <th style="padding:6px 8px;">Category</th>
+            <th style="padding:6px 8px;">Disposition</th>
+            <th style="padding:6px 8px;">Error</th>
+        </tr></thead>
+        <tbody>
+        {% for j in data.failed_jobs_detail %}
+            <tr style="border-top:1px solid var(--gray-100);">
+                <td style="padding:8px;white-space:nowrap;color:var(--gray-500);">{{ j.updated_at }}</td>
+                <td style="padding:8px;">{{ j.domain_name }}</td>
+                <td style="padding:8px;">{{ j.job_type }}</td>
+                <td style="padding:8px;">
+                    {% set cat = j.error_category or 'unclassified' %}
+                    {% if cat in ['upstream_outage','transient','rate_limited','timeout'] %}
+                        <span style="color:var(--gray-500);">{{ cat }}</span>
+                    {% else %}
+                        <span style="color:var(--danger);font-weight:600;">{{ cat }}</span>
+                    {% endif %}
+                </td>
+                <td style="padding:8px;white-space:nowrap;">
+                    {% if j.resolved_since %}
+                        <span style="color:var(--success);">&#10003; Resolved — later scan succeeded</span>
+                    {% else %}
+                        <span style="color:var(--danger);font-weight:600;">Unresolved — no success since</span>
+                    {% endif %}
+                </td>
+                <td style="padding:8px;color:var(--gray-600);">{{ (j.error or '')[:200] }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</details>
+{% endif %}
+
+<div class="card" style="margin-bottom: 24px;">
+    <div class="card-header"><h2 class="card-title">Scheduled Tasks by Lane</h2></div>
+    <table class="cron-table">
+        <thead>
+            <tr><th>Task</th><th>Schedule</th><th>Last Run</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+            {% for lane_key in ['fast', 'slow', 'digest'] %}
+                {% set lane_display = data.lanes[lane_key].display_name if data.lanes[lane_key] else lane_key %}
+                {% set lane_hooks = data.cron_hooks | selectattr('lane', 'equalto', lane_key) | list %}
+                {% if lane_hooks %}
+                <tr class="lane-group-header">
+                    <td colspan="4">{{ lane_display }}</td>
+                </tr>
+                    {% for hook in lane_hooks %}
+                    <tr>
+                        <td>{{ hook.display_name }}</td>
+                        <td>{{ hook.schedule }}</td>
+                        <td>
+                            {% if hook.last_run %}
+                                {{ hook.last_run.strftime('%b %d, %H:%M') }}
+                                <span style="color: var(--gray-500); font-size: 12px;">({{ hook.minutes_ago }}m ago)</span>
+                            {% else %}
+                                <span style="color: var(--gray-400);">Never</span>
+                            {% endif %}
+                        </td>
+                        <td><span class="status-badge {{ hook.status }}">{{ hook.status | capitalize }}</span></td>
+                    </tr>
+                    {% endfor %}
+                {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+</div><!-- /tab-content cron -->
+
+<div class="tab-content" data-tab="database">
+
+{% if data.db_health %}
+{% if data.db_health.error %}
+<div class="alert alert-danger" style="margin-bottom: 16px;">DB health query failed: {{ data.db_health.error }}</div>
+{% else %}
+<div style="background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
+        <div>
+            <div style="font-size: 11px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;">Active Connections</div>
+            <div style="font-size: 28px; font-weight: 700; color: var(--gray-900);">
+                {{ data.db_health.threads_connected }}
+                <span style="font-size: 14px; color: var(--gray-400); font-weight: normal;">/ {{ data.db_health.max_connections }}</span>
+            </div>
+            <div style="font-size: 12px; color: var(--gray-500); margin-top: 2px;">{{ data.db_health.current_pct }}% of ceiling</div>
+        </div>
+        <div>
+            <div style="font-size: 11px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;">Peak Since Restart</div>
+            <div style="font-size: 28px; font-weight: 700; color: {% if data.db_health.conn_status == 'ok' %}var(--success){% elif data.db_health.conn_status == 'warn' %}var(--warning){% else %}var(--danger){% endif %};">
+                {{ data.db_health.max_used_connections }}
+                <span style="font-size: 14px; color: var(--gray-400); font-weight: normal;">/ {{ data.db_health.max_connections }}</span>
+            </div>
+            <div style="font-size: 12px; color: var(--gray-500); margin-top: 2px;">{{ data.db_health.peak_pct }}% of ceiling</div>
+        </div>
+        <div>
+            <div style="font-size: 11px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;">Aborted Connects</div>
+            <div style="font-size: 28px; font-weight: 700; color: {% if data.db_health.abort_status == 'ok' %}var(--success){% elif data.db_health.abort_status == 'warn' %}var(--warning){% else %}var(--danger){% endif %};">
+                {{ data.db_health.aborted_connects }}
+            </div>
+            <div style="font-size: 12px; color: var(--gray-500); margin-top: 2px;">since restart</div>
+        </div>
+        <div>
+            <div style="font-size: 11px; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;">DB Uptime</div>
+            <div style="font-size: 28px; font-weight: 700; color: var(--gray-900);">{{ data.db_health.uptime_str }}</div>
+            <div style="font-size: 12px; color: var(--gray-500); margin-top: 2px;">MariaDB {{ data.db_health.version }}</div>
+        </div>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding-top: 16px; border-top: 1px solid var(--gray-100);">
+        <div>
+            <div style="font-size: 11px; color: var(--gray-500); margin-bottom: 2px;">Running Queries</div>
+            <div style="font-size: 16px; font-weight: 600; color: var(--gray-900);">{{ data.db_health.threads_running }}</div>
+        </div>
+        <div>
+            <div style="font-size: 11px; color: var(--gray-500); margin-bottom: 2px;">Slow Queries</div>
+            <div style="font-size: 16px; font-weight: 600; color: {% if data.db_health.slow_queries > 100 %}var(--warning){% else %}var(--gray-900){% endif %};">{{ data.db_health.slow_queries }}</div>
+        </div>
+        <div>
+            <div style="font-size: 11px; color: var(--gray-500); margin-bottom: 2px;">Total Connections</div>
+            <div style="font-size: 16px; font-weight: 600; color: var(--gray-900);">{{ '{:,}'.format(data.db_health.connections) }}</div>
+        </div>
+        <div>
+            <div style="font-size: 11px; color: var(--gray-500); margin-bottom: 2px;">Buffer Pool</div>
+            <div style="font-size: 16px; font-weight: 600; color: var(--gray-900);">{{ data.db_health.innodb_buffer_pool_mb }} MB</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
+</div><!-- /tab-content database -->
+
+<div class="tab-content" data-tab="jobs">
+
+<div class="job-grid">
+    <div class="job-card">
+        <h3>Analysis Jobs <span class="timeframe">All Time</span></h3>
+        <div class="job-stats">
+            <div class="job-stat pending"><div class="num">{{ data.job_queues.analysis.pending or 0 }}</div><div class="lbl">Pending</div></div>
+            <div class="job-stat running"><div class="num">{{ data.job_queues.analysis.running or 0 }}</div><div class="lbl">Running</div></div>
+            <div class="job-stat complete"><div class="num">{{ data.job_queues.analysis.complete or 0 }}</div><div class="lbl">Complete</div></div>
+            <div class="job-stat failed"><div class="num">{{ data.job_queues.analysis.failed or 0 }}</div><div class="lbl">Failed</div></div>
+            <div class="job-stat cancelled"><div class="num">{{ data.job_queues.analysis.cancelled or 0 }}</div><div class="lbl">Cancelled</div></div>
+        </div>
+        <div class="section-24h">
+            <div class="section-24h-title">Last 24 Hours</div>
+            <div class="stats-24h">
+                <span><strong>{{ data.job_stats.analysis_24h.complete or 0 }}</strong> completed</span>
+                <span><strong>{{ data.job_stats.analysis_24h.failed or 0 }}</strong> failed</span>
+                <span><strong>{{ data.job_stats.analysis_24h.running or 0 }}</strong> running</span>
+            </div>
+        </div>
+    </div>
+    <div class="job-card">
+        <h3>Scan Jobs <span class="timeframe">All Time</span></h3>
+        <div class="job-stats">
+            <div class="job-stat pending"><div class="num">{{ data.job_queues.scan.pending or 0 }}</div><div class="lbl">Pending</div></div>
+            <div class="job-stat running"><div class="num">{{ data.job_queues.scan.running or 0 }}</div><div class="lbl">Running</div></div>
+            <div class="job-stat complete"><div class="num">{{ data.job_queues.scan.complete or 0 }}</div><div class="lbl">Complete</div></div>
+            <div class="job-stat failed"><div class="num">{{ data.job_queues.scan.failed or 0 }}</div><div class="lbl">Failed</div></div>
+            <div class="job-stat cancelled"><div class="num">{{ data.job_queues.scan.cancelled or 0 }}</div><div class="lbl">Cancelled</div></div>
+        </div>
+        <div class="section-24h">
+            <div class="section-24h-title">Last 24 Hours</div>
+            <div class="stats-24h">
+                <span><strong>{{ data.job_stats.scan_24h.complete or 0 }}</strong> completed</span>
+                <span><strong>{{ data.job_stats.scan_24h.failed or 0 }}</strong> failed</span>
+                <span><strong>{{ data.job_stats.scan_24h.running or 0 }}</strong> running</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+</div><!-- /tab-content jobs -->
+
+<div class="tab-content" data-tab="errors">
+
+<div class="card">
+    <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <h2 class="card-title">Recent Errors</h2>
+        <div style="display:flex; align-items:center; gap:12px; font-size:13px;">
+            {% if data.show_all_errors %}
+                <span style="color:var(--gray-600);">Showing all errors</span>
+                <a href="?tab=errors" style="color:var(--primary); text-decoration:none; font-weight:500;">Hide user-side issues</a>
+            {% elif data.hidden_error_count > 0 %}
+                <span style="color:var(--gray-600);">
+                    {{ data.hidden_error_count }} user-side {{ 'issue' if data.hidden_error_count == 1 else 'issues' }} hidden
+                </span>
+                <a href="?tab=errors&show_all=1" style="color:var(--primary); text-decoration:none; font-weight:500;">Show all</a>
+            {% endif %}
+        </div>
+    </div>
+    {% if data.recent_errors %}
+    <table class="error-table">
+        <thead>
+            <tr>
+                <th>Domain / User</th>
+                <th>Job Type</th>
+                <th>Category</th>
+                <th>Error</th>
+                <th>Time</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for err in data.recent_errors %}
+            <tr>
+                <td>
+                    <div class="domain">{{ err.domain or 'Unknown' }}</div>
+                    <div class="user">{{ err.user_email or 'Unknown user' }}</div>
+                </td>
+                <td>{{ err.job_type }}</td>
+                <td>
+                    {% set cat = err.error_category %}
+                    {% if cat == 'internal' %}
+                        <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#fee2e2; color:#991b1b; white-space:nowrap;">CiteMetrix Issue</span>
+                    {% elif cat == 'subscription_inactive' %}
+                        <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#fef3c7; color:#78350f; white-space:nowrap;">Subscription</span>
+                    {% elif cat == 'user_setup_incomplete' %}
+                        <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#dbeafe; color:#1e40af; white-space:nowrap;">Setup</span>
+                    {% elif cat == 'upstream_quota' %}
+                        <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#fef3c7; color:#78350f; white-space:nowrap;">Quota</span>
+                    {% elif cat == 'upstream_auth' %}
+                        <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#fef3c7; color:#78350f; white-space:nowrap;">Auth</span>
+                    {% elif cat == 'upstream_outage' %}
+                        <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#e0e7ff; color:#3730a3; white-space:nowrap;">Outage</span>
+                    {% elif cat == 'upstream_rate_limit' %}
+                        <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#e0e7ff; color:#3730a3; white-space:nowrap;">Rate Limit</span>
+                    {% elif cat == 'upstream_other' %}
+                        <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#f3f4f6; color:#374151; white-space:nowrap;">Upstream</span>
+                    {% else %}
+                        <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#f3f4f6; color:#374151; white-space:nowrap;">Uncategorized</span>
+                    {% endif %}
+                </td>
+                <td class="error-msg">{{ err.error or 'No error message' }}</td>
+                <td class="time">{{ err.updated_at.strftime('%b %d, %H:%M') if err.updated_at else '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="padding: 40px; text-align: center; color: var(--gray-500);">
+        {% if data.hidden_error_count > 0 %}
+            <div style="font-size:24px; margin-bottom:8px;">&#10003;</div>
+            <div>No CiteMetrix issues to investigate</div>
+            <div style="font-size:12px; margin-top:6px;">{{ data.hidden_error_count }} user-side {{ 'issue' if data.hidden_error_count == 1 else 'issues' }} hidden &mdash; <a href="?tab=errors&show_all=1" style="color:var(--primary);">show all</a></div>
+        {% else %}
+            No recent errors
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+</div><!-- /tab-content errors -->
+
+<script>
+/* Tab switching + state persistence + auto-refresh.
+ *
+ * Tab state persists across the 60-second auto-refresh via the ?tab=
+ * URL param. Without this, the page would snap back to Cron Lanes every
+ * minute when the user is looking at, say, Recent Errors. The param also
+ * makes tabs deep-linkable.
+ *
+ * The ?show_all=1 param (used by Recent Errors filter) is preserved
+ * through tab switches so the user doesn't lose their filter state when
+ * they navigate around.
+ */
+(function() {
+    var VALID_TABS = ['pipeline', 'cron', 'database', 'errors', 'jobs'];
+    var DEFAULT_TAB = 'pipeline';
+
+    function getActiveTab() {
+        var params = new URLSearchParams(window.location.search);
+        var tab = params.get('tab');
+        return VALID_TABS.indexOf(tab) !== -1 ? tab : DEFAULT_TAB;
+    }
+
+    function activateTab(tabName) {
+        document.querySelectorAll('.tab-button').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.tab === tabName);
+        });
+        document.querySelectorAll('.tab-content').forEach(function(content) {
+            content.classList.toggle('active', content.dataset.tab === tabName);
+        });
+    }
+
+    function switchTab(tabName) {
+        // Preserve other query params (notably ?show_all=1) when switching tabs
+        var params = new URLSearchParams(window.location.search);
+        params.set('tab', tabName);
+        var newUrl = window.location.pathname + '?' + params.toString();
+        window.history.replaceState({}, '', newUrl);
+        activateTab(tabName);
+    }
+
+    // Wire up tab buttons
+    document.querySelectorAll('.tab-button').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            switchTab(btn.dataset.tab);
+        });
+    });
+
+    // Apply the active tab from URL on initial load
+    activateTab(getActiveTab());
+
+    // Auto-refresh every 60s. Page reload preserves the ?tab= param
+    // we set above, so the active tab survives the refresh.
+    setTimeout(function() { window.location.reload(); }, 60000);
+})();
+</script>
+{% endblock %}

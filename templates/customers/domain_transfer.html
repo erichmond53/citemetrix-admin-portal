@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Domain Transfer{% endblock %}
+{% block page_title %}Domain Transfer{% endblock %}
+{% block content %}
+
+{% if result %}
+<div class="card" style="border-left:4px solid {{ 'var(--success)' if result.ok else 'var(--danger)' }};">
+  {% if result.ok %}
+    <div class="card-title" style="color:var(--success);">&#10003; Transfer complete &mdash; {{ result.domain }}</div>
+    <p style="color:var(--gray-600);margin:8px 0;">Moved to account #{{ result.dest_user_id }} from #{{ result.source_user_id }}.</p>
+    <table class="table"><tbody>
+      {% for k, v in result.counts.items() %}<tr><td style="font-family:monospace;font-size:12px;color:var(--gray-600);">{{ k }}</td><td style="text-align:right;">{{ v if v is not iterable or v is string else (v|length) }}</td></tr>{% endfor %}
+    </tbody></table>
+  {% else %}
+    <div class="card-title" style="color:var(--danger);">&#10007; Transfer failed &mdash; rolled back</div>
+    <p style="color:var(--gray-700);margin:8px 0;">{{ result.error }}</p>
+  {% endif %}
+  <a href="/customers/domain-transfer" class="btn btn-secondary" style="margin-top:8px;">New transfer</a>
+</div>
+{% else %}
+
+<div class="alert alert-warning" style="margin-bottom:20px;">
+  <div><strong>Irreversible.</strong> This re-parents a domain and all its per-domain data (scan history, alerts, API usage, reports) to another account, revokes the source team&#39;s access, and cancels in-flight scans. Domain-scoped data (scores, citations, keywords) follows automatically. Historical billing stays with the original payer.</div>
+</div>
+
+<form method="GET" class="card">
+  <div class="grid grid-2">
+    <div>
+      <label style="font-size:13px;font-weight:600;color:var(--gray-600);display:block;margin-bottom:6px;">1. Domain to transfer</label>
+      <input name="domain_q" value="{{ domain_q }}" placeholder="domain name or ID" style="width:100%;padding:10px;border:1px solid var(--gray-300);border-radius:8px;">
+    </div>
+    <div>
+      <label style="font-size:13px;font-weight:600;color:var(--gray-600);display:block;margin-bottom:6px;">2. Destination account</label>
+      <input name="dest_q" value="{{ dest_q }}" placeholder="email or user ID" style="width:100%;padding:10px;border:1px solid var(--gray-300);border-radius:8px;">
+    </div>
+  </div>
+
+  {% if domain_matches %}
+  <div style="margin-top:16px;"><div style="font-size:12px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:8px;">Pick the domain</div>
+    {% for d in domain_matches %}
+    <label style="display:block;padding:8px 10px;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:6px;cursor:pointer;">
+      <input type="radio" name="domain_id" value="{{ d.id }}" {% if domain_id == d.id|string %}checked{% endif %}>
+      <strong>{{ d.domain }}</strong>{% if d.brand_name %} &middot; {{ d.brand_name }}{% endif %} <span style="color:var(--gray-400);">&mdash; owner: {{ d.user_email or '?' }} (#{{ d.user_id }})</span>
+    </label>
+    {% endfor %}
+  </div>
+  {% elif domain_q %}<p style="color:var(--gray-400);margin-top:12px;">No domains match &ldquo;{{ domain_q }}&rdquo;.</p>{% endif %}
+
+  {% if dest_matches %}
+  <div style="margin-top:12px;"><div style="font-size:12px;font-weight:600;color:var(--gray-500);text-transform:uppercase;margin-bottom:8px;">Pick the destination account</div>
+    {% for u in dest_matches %}
+    <label style="display:block;padding:8px 10px;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:6px;cursor:pointer;">
+      <input type="radio" name="dest_id" value="{{ u.id }}" {% if dest_id == u.id|string %}checked{% endif %}>
+      <strong>{{ u.display_name or u.user_email }}</strong> <span style="color:var(--gray-400);">&mdash; {{ u.user_email }} (#{{ u.id }})</span>
+    </label>
+    {% endfor %}
+  </div>
+  {% elif dest_q %}<p style="color:var(--gray-400);margin-top:12px;">No accounts match &ldquo;{{ dest_q }}&rdquo;.</p>{% endif %}
+
+  <button type="submit" class="btn btn-primary" style="margin-top:16px;">Preview transfer</button>
+</form>
+
+{% if preview and not preview.error %}
+<div class="card">
+  <div class="card-title" style="margin-bottom:6px;">Preview</div>
+  <p style="color:var(--gray-600);margin-bottom:14px;">
+    <strong>{{ preview.domain.domain }}</strong>
+    &mdash; from {{ preview.source_user.user_email if preview.source_user else '?' }} (#{{ preview.source_user_id }})
+    {% if preview.dest %}&rarr; <strong>{{ preview.dest.user_email }}</strong> (#{{ preview.dest.id }}){% else %}<span style="color:var(--warning);">&rarr; pick a destination account above</span>{% endif %}
+  </p>
+  <div class="grid grid-3" style="margin-bottom:16px;">
+    <div class="stat-card"><div class="stat-label">Rows re-pointed</div><div class="stat-value">{{ '{:,}'.format(preview.total_rows) }}</div><div style="font-size:11px;color:var(--gray-400);">across {{ preview.tables|selectattr('rows')|list|length }} tables</div></div>
+    <div class="stat-card"><div class="stat-label">Team access revoked</div><div class="stat-value">{{ preview.team_revoke }}</div></div>
+    <div class="stat-card"><div class="stat-label">Meta keys moved</div><div class="stat-value">{{ preview.meta_keys|length }}</div></div>
+  </div>
+  <table class="table"><thead><tr><th>Table</th><th style="text-align:right;">Rows</th><th></th></tr></thead><tbody>
+    {% for t in preview.tables if t.rows %}<tr><td style="font-family:monospace;font-size:12px;">{{ t.table }}</td><td style="text-align:right;">{{ '{:,}'.format(t.rows) }}</td><td style="font-size:11px;color:var(--gray-400);">{{ t.note }}</td></tr>{% endfor %}
+  </tbody></table>
+  <p style="font-size:12px;color:var(--gray-400);margin:10px 0 0;">Domain-scoped data (scores, citations, keywords, competitors, snapshots) follows the domain automatically and isn&#39;t listed here.</p>
+
+  {% if preview.dest %}
+  <form method="POST" action="/customers/domain-transfer/execute" style="margin-top:18px;border-top:1px solid var(--gray-200);padding-top:16px;"
+        onsubmit="return confirm('Transfer {{ preview.domain.domain }} to {{ preview.dest.user_email }}? This cannot be undone.');">
+    <input type="hidden" name="domain_id" value="{{ preview.domain.id }}">
+    <input type="hidden" name="dest_id" value="{{ preview.dest.id }}">
+    <label style="font-size:13px;color:var(--gray-600);display:block;margin-bottom:6px;">Type <code>{{ preview.domain.domain }}</code> to confirm:</label>
+    <div style="display:flex;gap:10px;">
+      <input name="confirm" autocomplete="off" placeholder="{{ preview.domain.domain }}" style="padding:10px;border:1px solid var(--gray-300);border-radius:8px;flex:1;max-width:360px;">
+      <button type="submit" class="btn" style="background:var(--danger);color:#fff;">Execute Transfer</button>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% elif preview and preview.error %}<div class="alert alert-error">{{ preview.error }}</div>{% endif %}
+
+{% endif %}
+{% endblock %}

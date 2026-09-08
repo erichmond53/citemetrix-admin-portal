@@ -1,0 +1,1019 @@
+{% extends "base.html" %}
+
+{% block title %}Competition{% endblock %}
+
+{% block page_title %}Competitive Intelligence{% endblock %}
+
+{% block content %}
+
+<style>
+
+:root { --threat-critical: #DC2626; --threat-high: #EA580C; --threat-medium: #CA8A04; --threat-low: #16A34A; --threat-watch: #6B7280; }
+
+.threat-strip { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+
+.threat-stat { background: #fff; border: 1px solid var(--gray-200); border-radius: 10px; padding: 14px 20px; min-width: 100px; text-align: center; }
+
+.threat-stat .num { font-size: 28px; font-weight: 700; }
+
+.threat-stat .lbl { font-size: 11px; color: var(--gray-500); text-transform: uppercase; margin-top: 2px; }
+
+.threat-stat.critical .num { color: var(--threat-critical); }
+
+.threat-stat.high .num { color: var(--threat-high); }
+
+.threat-stat.medium .num { color: var(--threat-medium); }
+
+.threat-stat.low .num { color: var(--threat-low); }
+
+.threat-stat.watch .num { color: var(--threat-watch); }
+
+
+
+.tabs { display: flex; gap: 0; border-bottom: 2px solid var(--gray-200); margin-bottom: 20px; }
+
+.tab { padding: 12px 24px; cursor: pointer; font-weight: 500; color: var(--gray-500); border-bottom: 2px solid transparent; margin-bottom: -2px; }
+
+.tab:hover { color: var(--gray-700); }
+
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.tab-content { display: none; }
+
+.tab-content.active { display: block; }
+
+
+
+.add-form { background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+
+.add-form h3 { margin: 0 0 16px; font-size: 16px; }
+
+.add-form-row { display: flex; gap: 12px; align-items: flex-end; }
+
+.add-form-row .form-group { flex: 1; margin: 0; }
+
+.add-form-row label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+
+.add-form-row input { width: 100%; padding: 10px 12px; border: 1px solid var(--gray-200); border-radius: 8px; font-size: 14px; }
+
+.add-form-row input:focus { outline: none; border-color: var(--primary); }
+
+.btn-research { background: var(--primary); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+
+.btn-research:hover { background: var(--primary-dark); }
+
+.btn-research:disabled { background: var(--gray-300); cursor: not-allowed; }
+
+.research-status { margin-top: 12px; padding: 12px; border-radius: 8px; font-size: 14px; display: none; }
+
+.research-status.loading { display: block; background: #EFF6FF; color: #1E40AF; }
+
+.research-status.success { display: block; background: #F0FDF4; color: #166534; }
+
+.research-status.error { display: block; background: #FEF2F2; color: #991B1B; }
+
+
+
+.competitor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+
+.competitor-card { background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; padding: 20px; cursor: pointer; transition: box-shadow 0.15s, border-color 0.15s; position: relative; overflow: hidden; }
+
+.competitor-card:hover { border-color: var(--primary); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+
+.competitor-card .threat-bar { position: absolute; top: 0; left: 0; right: 0; height: 4px; }
+
+.competitor-card .threat-bar.critical { background: var(--threat-critical); }
+
+.competitor-card .threat-bar.high { background: var(--threat-high); }
+
+.competitor-card .threat-bar.medium { background: var(--threat-medium); }
+
+.competitor-card .threat-bar.low { background: var(--threat-low); }
+
+.competitor-card .threat-bar.watch { background: var(--threat-watch); }
+
+.competitor-card h3 { margin: 8px 0 4px; font-size: 18px; }
+
+.competitor-card .tagline { color: var(--gray-500); font-size: 13px; margin-bottom: 12px; }
+
+.competitor-card .meta { display: flex; gap: 16px; font-size: 13px; color: var(--gray-600); }
+
+.competitor-card .score { position: absolute; top: 16px; right: 16px; width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px; }
+
+.competitor-card .score.critical { background: #FEE2E2; color: var(--threat-critical); }
+
+.competitor-card .score.high { background: #FFEDD5; color: var(--threat-high); }
+
+.competitor-card .score.medium { background: #FEF9C3; color: var(--threat-medium); }
+
+.competitor-card .score.low { background: #DCFCE7; color: var(--threat-low); }
+
+.competitor-card .score.watch { background: #F3F4F6; color: var(--threat-watch); }
+
+.competitor-card .actions { position: absolute; bottom: 12px; right: 12px; display: flex; gap: 8px; opacity: 0; transition: opacity 0.15s; }
+
+.competitor-card:hover .actions { opacity: 1; }
+
+.competitor-card .actions button { background: var(--gray-100); border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+
+.competitor-card .actions button:hover { background: var(--gray-200); }
+
+.competitor-card .actions button.danger:hover { background: #FEE2E2; color: var(--danger); }
+
+
+
+.detail-panel { position: fixed; top: 0; right: -600px; width: 600px; height: 100vh; background: #fff; box-shadow: -4px 0 24px rgba(0,0,0,0.15); z-index: 1000; transition: right 0.3s; overflow-y: auto; }
+
+.detail-panel.open { right: 0; }
+
+.detail-panel-header { padding: 20px 24px; border-bottom: 1px solid var(--gray-200); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: #fff; z-index: 10; }
+
+.detail-panel-header h2 { margin: 0; font-size: 20px; }
+
+.detail-panel-close { background: none; border: none; font-size: 24px; cursor: pointer; color: var(--gray-500); }
+
+.detail-panel-body { padding: 24px; }
+
+.detail-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--gray-200); margin-bottom: 20px; }
+
+.detail-tab { padding: 10px 16px; cursor: pointer; font-size: 14px; font-weight: 500; color: var(--gray-500); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+
+.detail-tab:hover { color: var(--gray-700); }
+
+.detail-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.detail-section { display: none; }
+
+.detail-section.active { display: block; }
+
+.detail-section h3 { font-size: 14px; color: var(--gray-500); text-transform: uppercase; margin: 0 0 12px; }
+
+.detail-section h3:not(:first-child) { margin-top: 24px; }
+
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+
+.info-item { background: var(--gray-50); padding: 12px; border-radius: 8px; }
+
+.info-item .label { font-size: 11px; color: var(--gray-500); text-transform: uppercase; }
+
+.info-item .value { font-size: 14px; font-weight: 500; margin-top: 2px; }
+
+.swot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.swot-box { padding: 12px; border-radius: 8px; }
+
+.swot-box.strengths { background: #DCFCE7; }
+
+.swot-box.weaknesses { background: #FEE2E2; }
+
+.swot-box.opportunities { background: #DBEAFE; }
+
+.swot-box.threats { background: #FEF9C3; }
+
+.swot-box h4 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; }
+
+.swot-box ul { margin: 0; padding-left: 18px; font-size: 13px; }
+
+.swot-box li { margin-bottom: 4px; }
+
+.feature-list { margin: 0; padding: 0; list-style: none; }
+
+.feature-list li { padding: 10px 12px; border-bottom: 1px solid var(--gray-100); display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+
+.feature-list li:last-child { border-bottom: none; }
+
+.feature-list .badge-small { font-size: 11px; padding: 3px 8px; border-radius: 4px; }
+
+.feature-list .badge-small.us { background: #DCFCE7; color: #166534; }
+
+.feature-list .badge-small.them { background: #FEE2E2; color: #991B1B; }
+
+.feature-list .badge-small.both { background: #F3F4F6; color: #374151; }
+
+.history-item { padding: 12px; border-left: 3px solid var(--gray-200); margin-bottom: 12px; background: var(--gray-50); border-radius: 0 8px 8px 0; }
+
+.history-item.critical { border-left-color: var(--threat-critical); }
+
+.history-item.high { border-left-color: var(--threat-high); }
+
+.history-item.medium { border-left-color: var(--threat-medium); }
+
+.history-item .date { font-size: 12px; color: var(--gray-500); }
+
+.history-item .summary { font-size: 14px; margin-top: 4px; }
+
+
+
+.filter-bar { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+
+.filter-bar select { padding: 8px 12px; border: 1px solid var(--gray-200); border-radius: 8px; font-size: 13px; background: #fff; }
+
+.filter-bar select:focus { outline: none; border-color: var(--primary); }
+
+
+
+.roadmap-filters { display: flex; gap: 8px; margin-bottom: 16px; }
+
+.roadmap-filter { padding: 6px 14px; border: 1px solid var(--gray-200); border-radius: 20px; font-size: 13px; cursor: pointer; background: #fff; }
+
+.roadmap-filter:hover { border-color: var(--primary); }
+
+.roadmap-filter.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+.roadmap-item { background: #fff; border: 1px solid var(--gray-200); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+
+.roadmap-item h4 { margin: 0 0 6px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+
+.roadmap-item .desc { font-size: 13px; color: var(--gray-600); margin-bottom: 10px; }
+
+.roadmap-item .meta { display: flex; gap: 12px; font-size: 12px; color: var(--gray-500); }
+
+.priority-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+
+.priority-badge.critical { background: #FEE2E2; color: var(--threat-critical); }
+
+.priority-badge.high { background: #FFEDD5; color: var(--threat-high); }
+
+.priority-badge.medium { background: #FEF9C3; color: var(--threat-medium); }
+
+.priority-badge.low { background: #DCFCE7; color: var(--threat-low); }
+
+
+
+.alert-item { padding: 14px; border-radius: 10px; margin-bottom: 10px; border: 1px solid var(--gray-200); }
+
+.alert-item.unread { background: #FFFBEB; border-color: #FCD34D; }
+
+.alert-item .alert-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 6px; }
+
+.alert-item .alert-title { font-weight: 600; font-size: 14px; }
+
+.alert-item .alert-body { font-size: 13px; color: var(--gray-600); }
+
+.alert-item .alert-meta { font-size: 12px; color: var(--gray-500); margin-top: 8px; }
+
+
+
+.investor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+
+.investor-card { background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; padding: 20px; cursor: pointer; transition: border-color 0.15s; }
+
+.investor-card:hover { border-color: var(--primary); }
+
+.investor-card h3 { margin: 0 0 4px; font-size: 16px; }
+
+.investor-card .thesis { font-size: 13px; color: var(--gray-500); margin-bottom: 12px; }
+
+.investor-card .fit-score { display: inline-block; padding: 4px 10px; border-radius: 6px; font-size: 13px; font-weight: 600; }
+
+.investor-card .fit-score.hot { background: #DCFCE7; color: #166534; }
+
+.investor-card .fit-score.warm { background: #FEF9C3; color: #854D0E; }
+
+.investor-card .fit-score.possible { background: #F3F4F6; color: #374151; }
+
+.investor-card .fit-score.cold { background: #FEE2E2; color: #991B1B; }
+
+
+
+.overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.3); z-index: 999; display: none; }
+
+.overlay.open { display: block; }
+
+</style>
+
+
+
+{% if data.error %}<div class="alert alert-danger">{{ data.error }}</div>{% endif %}
+
+
+
+<div class="threat-strip">
+
+    <div class="threat-stat"><div class="num">{{ data.stats.total }}</div><div class="lbl">Total</div></div>
+
+    <div class="threat-stat critical"><div class="num">{{ data.stats.critical }}</div><div class="lbl">Critical</div></div>
+
+    <div class="threat-stat high"><div class="num">{{ data.stats.high }}</div><div class="lbl">High</div></div>
+
+    <div class="threat-stat medium"><div class="num">{{ data.stats.medium }}</div><div class="lbl">Medium</div></div>
+
+    <div class="threat-stat low"><div class="num">{{ data.stats.low }}</div><div class="lbl">Low</div></div>
+
+    <div class="threat-stat watch"><div class="num">{{ data.stats.watch }}</div><div class="lbl">Watch</div></div>
+
+</div>
+
+
+
+<div class="tabs">
+
+    <div class="tab active" data-tab="competitors">Competitors</div>
+
+    <div class="tab" data-tab="roadmap">Roadmap</div>
+
+    <div class="tab" data-tab="alerts">Alerts{% if data.unread_alerts %} <span class="badge badge-danger">{{ data.unread_alerts }}</span>{% endif %}</div>
+
+</div>
+
+
+
+<div id="competitors" class="tab-content active">
+
+    <div class="add-form">
+
+        <h3>Research New Competitor</h3>
+
+        <div class="add-form-row">
+
+            <div class="form-group">
+
+                <label>Company Name (optional)</label>
+
+                <input type="text" id="newCompetitorName" placeholder="e.g. Otterly.ai">
+
+            </div>
+
+            <div class="form-group">
+
+                <label>Website URL *</label>
+
+                <input type="text" id="newCompetitorUrl" placeholder="e.g. otterly.ai">
+
+            </div>
+
+            <button class="btn-research" id="btnResearch" onclick="researchCompetitor()">Research</button>
+
+        </div>
+
+        <div id="researchStatus" class="research-status"></div>
+
+    </div>
+
+    
+
+    <div class="competitor-grid">
+
+        {% for c in data.competitors %}
+
+        <div class="competitor-card" onclick="openCompetitorDetail({{ c.id }})">
+
+            <div class="threat-bar {{ c.threat_level or 'medium' }}"></div>
+
+            <div class="score {{ c.threat_level or 'medium' }}">{{ c.competitive_score or 50 }}</div>
+
+            <h3>{{ c.company_name }}</h3>
+
+            <div class="tagline">{{ c.tagline or c.company_url }}</div>
+
+            <div class="meta">
+
+                {% if c.funding_total %}<span>{{ c.funding_total }}</span>{% endif %}
+
+                {% if c.employee_count %}<span>{{ c.employee_count }} employees</span>{% endif %}
+
+                {% if c.last_scanned_at %}<span class="scan-age" data-scanned-at="{{ c.last_scanned_at }}" title="{{ c.last_scanned_at }} UTC">…</span>{% endif %}
+
+            </div>
+
+            <div class="actions" onclick="event.stopPropagation()">
+
+                <button onclick="rescanCompetitor(this, {{ c.id }}, '{{ c.company_name }}')" title="Rescan">Rescan</button>
+
+                <button class="danger" onclick="deleteCompetitor({{ c.id }}, '{{ c.company_name }}')" title="Archive">Delete</button>
+
+            </div>
+
+        </div>
+
+        {% endfor %}
+
+    </div>
+
+</div>
+
+
+
+<div id="roadmap" class="tab-content">
+
+    <p style="color:var(--gray-500);font-size:13px;margin:0 0 14px;max-width:760px;">Consolidated competitive intelligence, deduped from 3,300+ tracked competitor signals. <strong>Feature gaps</strong> are the distinct capabilities competitors have that CiteMetrix doesn't (each shows who has it); <strong>strategic plays</strong> are the recurring positioning recommendations. Set a status on any item, or push it to the <a href="/roadmap">product roadmap</a>.</p>
+
+    <div class="roadmap-filters">
+
+        <span class="roadmap-filter active" data-progress="all">All</span>
+
+        <span class="roadmap-filter" data-progress="not_started">Not started</span>
+
+        <span class="roadmap-filter" data-progress="partially_completed">Partially done</span>
+
+        <span class="roadmap-filter" data-progress="completed">Completed</span>
+
+        <span class="roadmap-filter" data-progress="added">Added</span>
+
+    </div>
+
+    <div id="roadmapList"></div>
+
+</div>
+
+
+
+<div id="alerts" class="tab-content">
+
+    <div class="filter-bar">
+
+        <select id="alertCompetitorFilter" onchange="filterAlerts()">
+
+            <option value="">All Competitors</option>
+
+        </select>
+
+        <select id="alertTypeFilter" onchange="filterAlerts()">
+
+            <option value="">All Types</option>
+
+        </select>
+
+    </div>
+
+    <div id="alertsList"></div>
+
+</div>
+
+
+
+<div class="overlay" id="overlay" onclick="closeDetailPanel()"></div>
+
+<div class="detail-panel" id="detailPanel">
+
+    <div class="detail-panel-header">
+
+        <h2 id="detailTitle">Competitor</h2>
+
+        <button class="detail-panel-close" onclick="closeDetailPanel()">x</button>
+
+    </div>
+
+    <div class="detail-panel-body" id="detailBody"></div>
+
+</div>
+
+
+
+<script>
+
+const competitors = {{ data.competitors | tojson | safe }};
+
+let currentCompetitor = null;
+
+let insightsData = [];
+
+let roadmapFilter = 'all';
+
+let alertsData = [];
+
+let investorsData = [];
+
+
+
+document.querySelectorAll(".tab").forEach(tab => {
+
+    tab.addEventListener("click", () => {
+
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+
+        document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+
+        tab.classList.add("active");
+
+        document.getElementById(tab.dataset.tab).classList.add("active");
+
+        
+
+        if (tab.dataset.tab === "roadmap" && !insightsData.length) loadRoadmap();
+
+        if (tab.dataset.tab === "alerts" && !alertsData.length) loadAlerts();
+
+    });
+
+});
+
+
+
+async function researchCompetitor() {
+    const name = document.getElementById("newCompetitorName").value.trim();
+    const url = document.getElementById("newCompetitorUrl").value.trim();
+    const btn = document.getElementById("btnResearch");
+    const status = document.getElementById("researchStatus");
+
+    if (!url) {
+        status.className = "research-status error";
+        status.textContent = "Please enter a website URL";
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Researching...";
+    status.className = "research-status loading";
+    status.textContent = "Starting research... this runs in the background.";
+
+    try {
+        const res = await fetch("/api/competition/research", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, url })
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || ("HTTP " + res.status));
+        pollCompetitionJob(data.job_id, name || url, { btn: btn, btnText: "Research" });
+    } catch (e) {
+        status.className = "research-status error";
+        status.textContent = "Error starting research: " + e.message;
+        btn.disabled = false;
+        btn.textContent = "Research";
+    }
+}
+
+async function rescanCompetitor(btn, id, name) {
+    if (!confirm("Rescan " + name + "? This runs in the background and takes about 2-3 minutes. You can keep working while it runs.")) return;
+
+    const status = document.getElementById("researchStatus");
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Rescanning...";
+    status.className = "research-status loading";
+    status.textContent = "Starting rescan of " + name + "...";
+
+    try {
+        const res = await fetch("/api/competition/rescan/" + id, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || ("HTTP " + res.status));
+        pollCompetitionJob(data.job_id, name, { btn: btn, btnText: origText });
+    } catch (e) {
+        status.className = "research-status error";
+        status.textContent = "Error starting rescan: " + e.message;
+        btn.disabled = false;
+        btn.textContent = origText;
+    }
+}
+
+// Poll a background competition job until it finishes. The job runs server-side,
+// so reloading or navigating away does NOT cancel it.
+function pollCompetitionJob(jobId, label, opts) {
+    opts = opts || {};
+    const status = document.getElementById("researchStatus");
+    const started = Date.now();
+    const reEnable = () => {
+        if (opts.btn) { opts.btn.disabled = false; opts.btn.textContent = opts.btnText; }
+    };
+    const timer = setInterval(async () => {
+        let j;
+        try {
+            const res = await fetch("/api/competition/job/" + jobId);
+            if (res.status === 404) {
+                clearInterval(timer);
+                status.className = "research-status error";
+                status.textContent = "Error: job not found (id " + jobId + ")";
+                reEnable();
+                return;
+            }
+            j = await res.json();
+        } catch (e) {
+            return; // transient poll hiccup - keep trying
+        }
+        const secs = Math.round((Date.now() - started) / 1000);
+        if (j.status === "done") {
+            clearInterval(timer);
+            status.className = "research-status success";
+            status.textContent = (label ? label + ": " : "") + "complete! Reloading...";
+            setTimeout(() => location.reload(), 1200);
+        } else if (j.status === "error") {
+            clearInterval(timer);
+            status.className = "research-status error";
+            status.textContent = "Error: " + (j.error || "job failed");
+            reEnable();
+        } else {
+            status.className = "research-status loading";
+            status.textContent = (label ? label + " - " : "") + (j.phase || "Working...") + " (" + secs + "s)";
+        }
+    }, 2500);
+}
+
+async function deleteCompetitor(id, name) {
+
+    if (!confirm("Archive " + name + "?")) return;
+
+    
+
+    try {
+
+        const res = await fetch("/api/competition/" + id, { method: "DELETE" });
+
+        const data = await res.json();
+
+        if (data.success) location.reload();
+
+        else alert("Error: " + (data.error || "Unknown"));
+
+    } catch (e) {
+
+        alert("Error: " + e.message);
+
+    }
+
+}
+
+
+
+async function openCompetitorDetail(id) {
+
+    try {
+
+        const res = await fetch("/api/competition/" + id);
+
+        currentCompetitor = await res.json();
+
+        document.getElementById("detailTitle").textContent = currentCompetitor.company_name;
+
+        document.getElementById("overlay").classList.add("open");
+
+        document.getElementById("detailPanel").classList.add("open");
+
+        renderDetailPanel();
+
+    } catch (e) {
+
+        alert("Error: " + e.message);
+
+    }
+
+}
+
+
+
+function closeDetailPanel() {
+
+    document.getElementById("overlay").classList.remove("open");
+
+    document.getElementById("detailPanel").classList.remove("open");
+
+}
+
+
+
+function renderDetailPanel() {
+
+    const c = currentCompetitor;
+
+    const parity = c.feature_parity || {};
+
+    const swot = c.swot_analysis || {};
+
+    const history = c.history || [];
+
+    
+
+    const theyHave = (parity.they_have_we_dont || []).map(f => "<li><span>" + (f.feature || f) + "</span><span class=\"badge-small them\">" + (f.importance || "") + "</span></li>").join("") || "<li>None</li>";
+
+    const weHave = (parity.we_have_they_dont || []).map(f => "<li><span>" + (f.feature || f) + "</span><span class=\"badge-small us\">" + (f.moat_strength || "") + "</span></li>").join("") || "<li>None</li>";
+
+    const bothHave = (parity.both_have || []).map(f => "<li><span>" + (f.feature || f) + "</span><span class=\"badge-small both\">" + (f.who_does_better || "") + "</span></li>").join("") || "<li>None</li>";
+
+    
+
+    const strengths = (swot.strengths || []).map(s => "<li>" + s + "</li>").join("") || "<li>N/A</li>";
+
+    const weaknesses = (swot.weaknesses || []).map(s => "<li>" + s + "</li>").join("") || "<li>N/A</li>";
+
+    const opportunities = (swot.opportunities || []).map(s => "<li>" + s + "</li>").join("") || "<li>N/A</li>";
+
+    const threats = (swot.threats || []).map(s => "<li>" + s + "</li>").join("") || "<li>N/A</li>";
+
+    
+
+    const strategies = (c.strategy_recommendations || []).map(r => "<div class=\"roadmap-item\"><h4><span class=\"priority-badge " + r.priority + "\">" + r.priority + "</span> " + r.action + "</h4><div class=\"desc\">" + (r.rationale || "") + "</div></div>").join("") || "<p>No recommendations</p>";
+
+    
+
+    const historyHtml = history.map(h => "<div class=\"history-item " + h.severity + "\"><div class=\"date\">" + h.detected_at + "</div><div class=\"summary\"><strong>" + h.change_type + ":</strong> " + h.change_summary + "</div></div>").join("") || "<p>No history</p>";
+
+    
+
+    document.getElementById("detailBody").innerHTML = 
+
+        "<div class=\"detail-tabs\">" +
+
+        "<div class=\"detail-tab active\" onclick=\"showDetailSection(this, 'overview')\">Overview</div>" +
+
+        "<div class=\"detail-tab\" onclick=\"showDetailSection(this, 'swot')\">SWOT</div>" +
+
+        "<div class=\"detail-tab\" onclick=\"showDetailSection(this, 'features')\">Features</div>" +
+
+        "<div class=\"detail-tab\" onclick=\"showDetailSection(this, 'strategy')\">Strategy</div>" +
+
+        "<div class=\"detail-tab\" onclick=\"showDetailSection(this, 'history')\">History</div>" +
+
+        "</div>" +
+
+        "<div id=\"detail-overview\" class=\"detail-section active\">" +
+
+        "<div class=\"info-grid\">" +
+
+        "<div class=\"info-item\"><div class=\"label\">Website</div><div class=\"value\"><a href=\"" + c.company_url + "\" target=\"_blank\">" + c.company_url + "</a></div></div>" +
+
+        "<div class=\"info-item\"><div class=\"label\">Founded</div><div class=\"value\">" + (c.founded || "Unknown") + "</div></div>" +
+
+        "<div class=\"info-item\"><div class=\"label\">HQ</div><div class=\"value\">" + (c.headquarters || "Unknown") + "</div></div>" +
+
+        "<div class=\"info-item\"><div class=\"label\">Employees</div><div class=\"value\">" + (c.employee_count || "Unknown") + "</div></div>" +
+
+        "<div class=\"info-item\"><div class=\"label\">Funding</div><div class=\"value\">" + (c.funding_total || "Unknown") + "</div></div>" +
+
+        "<div class=\"info-item\"><div class=\"label\">Threat</div><div class=\"value\" style=\"text-transform:capitalize;\">" + (c.threat_level || "Medium") + "</div></div>" +
+
+        "</div><h3>Tagline</h3><p>" + (c.tagline || "N/A") + "</p></div>" +
+
+        "<div id=\"detail-swot\" class=\"detail-section\"><div class=\"swot-grid\">" +
+
+        "<div class=\"swot-box strengths\"><h4>Strengths</h4><ul>" + strengths + "</ul></div>" +
+
+        "<div class=\"swot-box weaknesses\"><h4>Weaknesses</h4><ul>" + weaknesses + "</ul></div>" +
+
+        "<div class=\"swot-box opportunities\"><h4>Opportunities</h4><ul>" + opportunities + "</ul></div>" +
+
+        "<div class=\"swot-box threats\"><h4>Threats</h4><ul>" + threats + "</ul></div></div></div>" +
+
+        "<div id=\"detail-features\" class=\"detail-section\">" +
+
+        "<h3>They Have, We Dont</h3><ul class=\"feature-list\">" + theyHave + "</ul>" +
+
+        "<h3>We Have, They Dont</h3><ul class=\"feature-list\">" + weHave + "</ul>" +
+
+        "<h3>Both Have</h3><ul class=\"feature-list\">" + bothHave + "</ul></div>" +
+
+        "<div id=\"detail-strategy\" class=\"detail-section\"><h3>Recommendations</h3>" + strategies + "</div>" +
+
+        "<div id=\"detail-history\" class=\"detail-section\">" + historyHtml + "</div>";
+
+}
+
+
+
+function showDetailSection(el, section) {
+
+    document.querySelectorAll(".detail-tab").forEach(t => t.classList.remove("active"));
+
+    document.querySelectorAll(".detail-section").forEach(s => s.classList.remove("active"));
+
+    el.classList.add("active");
+
+    document.getElementById("detail-" + section).classList.add("active");
+
+}
+
+
+
+async function loadRoadmap() {
+
+    try {
+
+        const res = await fetch("/api/competition/insights");
+
+        insightsData = await res.json();
+
+        if (insightsData && insightsData.error) throw new Error(insightsData.error);
+
+        renderRoadmap();
+
+    } catch (e) {
+
+        document.getElementById("roadmapList").innerHTML = "<p>Error loading insights</p>";
+
+    }
+
+}
+
+
+
+function _esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+var _PLBL = { not_started:'Not started', partially_completed:'Partially done', completed:'Completed', added:'Added' };
+
+function insightCard(r){
+    var isGap = r.insight_type === 'feature_gap';
+    var comps = Array.isArray(r.competitors) ? r.competitors : [];
+    var added = r.progress === 'added';
+    var h = '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;margin-bottom:10px;background:#fff;">';
+    h += '<div style="display:flex;align-items:flex-start;gap:14px;">';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-size:14.5px;font-weight:650;color:#111827;">' + _esc(r.title) + '</div>';
+    if (r.description) h += '<div style="font-size:13px;color:#4b5563;line-height:1.45;margin-top:3px;">' + _esc(r.description) + '</div>';
+    h += '<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">';
+    if (isGap) {
+        comps.forEach(function(c){ h += '<span style="background:#eef2ff;color:#3730a3;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;">' + _esc(c) + '</span>'; });
+        h += '<span style="color:#9ca3af;font-size:11.5px;margin-left:2px;">' + comps.length + ' competitor' + (comps.length===1?'':'s') + ' &middot; ' + (r.source_count||0) + ' mentions</span>';
+    } else {
+        h += '<span style="color:#9ca3af;font-size:11.5px;">' + (r.source_count||0) + ' references consolidated</span>';
+    }
+    h += '</div></div>';
+    h += '<div style="flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:8px;">';
+    h += '<select onchange="setProgress(' + r.id + ',this.value)" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid #d1d5db;">';
+    ['not_started','partially_completed','completed','added'].forEach(function(v){
+        h += '<option value="' + v + '"' + (r.progress === v ? ' selected' : '') + '>' + _PLBL[v] + '</option>';
+    });
+    h += '</select>';
+    if (added) {
+        h += '<span style="color:#0f766e;font-size:12px;font-weight:600;white-space:nowrap;">&#10003; On roadmap</span>';
+    } else {
+        h += '<button onclick="addInsightToRoadmap(this,' + r.id + ')" style="background:#00A88A;color:#fff;border:0;border-radius:7px;padding:6px 13px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;">+ Add to roadmap</button>';
+    }
+    h += '</div></div></div>';
+    return h;
+}
+
+function renderRoadmap() {
+    var f = roadmapFilter || 'all';
+    var rows = (insightsData || []).filter(function(r){ return f === 'all' || r.progress === f; });
+    var gaps = rows.filter(function(r){ return r.insight_type === 'feature_gap'; });
+    var strat = rows.filter(function(r){ return r.insight_type === 'strategy'; });
+    function section(title, sub, arr){
+        if (!arr.length) return '';
+        var s = '<div style="margin:6px 0 12px;"><span style="font-size:16px;font-weight:700;color:#111827;">' + title + '</span> <span style="color:#9ca3af;font-size:13px;">' + arr.length + '</span><div style="font-size:12.5px;color:#6b7280;margin-top:2px;">' + sub + '</div></div>';
+        arr.forEach(function(r){ s += insightCard(r); });
+        return s;
+    }
+    var html = section('Feature gaps', "Capabilities competitors have that CiteMetrix doesn't &mdash; deduped, with who has each.", gaps);
+    if (gaps.length && strat.length) html += '<div style="height:24px;"></div>';
+    html += section('Strategic plays', 'Recurring positioning &amp; go-to-market recommendations, consolidated.', strat);
+    document.getElementById("roadmapList").innerHTML = html || "<p>No insights match this filter.</p>";
+}
+
+function setProgress(id, val){
+    fetch('/competition/insight/' + id + '/progress', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'progress=' + encodeURIComponent(val)})
+        .then(function(r){ return r.json(); })
+        .then(function(res){ if(res && res.ok){ var it=(insightsData||[]).find(function(x){return x.id==id;}); if(it) it.progress=val; renderRoadmap(); } });
+}
+
+function addInsightToRoadmap(btn, id){
+    btn.disabled = true; var old = btn.textContent; btn.textContent = 'Adding...';
+    fetch('/competition/insight/' + id + '/add', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:''})
+        .then(function(r){ return r.json(); })
+        .then(function(res){ if(res && res.ok){ var it=(insightsData||[]).find(function(x){return x.id==id;}); if(it) it.progress='added'; renderRoadmap(); } else { alert((res && res.error) || 'Failed'); btn.disabled=false; btn.textContent=old; } })
+        .catch(function(){ alert('Request failed'); btn.disabled=false; btn.textContent=old; });
+}
+
+document.querySelectorAll(".roadmap-filter").forEach(f => {
+
+    f.addEventListener("click", () => {
+
+        document.querySelectorAll(".roadmap-filter").forEach(x => x.classList.remove("active"));
+
+        f.classList.add("active");
+
+        roadmapFilter = f.dataset.progress || 'all';
+
+        renderRoadmap();
+
+    });
+
+});
+
+
+
+async function loadAlerts() {
+
+    try {
+
+        const res = await fetch("/api/competition/alerts");
+
+        alertsData = await res.json();
+
+        
+
+        // Populate filters
+
+        const compFilter = document.getElementById("alertCompetitorFilter");
+
+        const typeFilter = document.getElementById("alertTypeFilter");
+
+        const companies = [...new Set(alertsData.map(a => a.company_name))];
+
+        const types = [...new Set(alertsData.map(a => a.alert_type))];
+
+        companies.forEach(c => { const o = document.createElement("option"); o.value = c; o.textContent = c; compFilter.appendChild(o); });
+
+        types.forEach(t => { const o = document.createElement("option"); o.value = t; o.textContent = t; typeFilter.appendChild(o); });
+
+        
+
+        renderAlerts();
+
+    } catch (e) {
+
+        document.getElementById("alertsList").innerHTML = "<p>Error loading alerts</p>";
+
+    }
+
+}
+
+
+
+function filterAlerts() {
+
+    const comp = document.getElementById("alertCompetitorFilter").value;
+
+    const type = document.getElementById("alertTypeFilter").value;
+
+    renderAlerts(comp, type);
+
+}
+
+
+
+function renderAlerts(compFilter, typeFilter) {
+
+    let filtered = alertsData;
+
+    if (compFilter) filtered = filtered.filter(a => a.company_name === compFilter);
+
+    if (typeFilter) filtered = filtered.filter(a => a.alert_type === typeFilter);
+
+    
+
+    document.getElementById("alertsList").innerHTML = filtered.map(a => 
+
+        "<div class=\"alert-item " + (a.is_read ? "" : "unread") + "\">" +
+
+        "<div class=\"alert-header\"><span class=\"alert-title\">" + a.alert_title + "</span>" +
+
+        "<span class=\"badge badge-" + (a.severity === "critical" ? "danger" : a.severity === "high" ? "warning" : "info") + "\">" + a.severity + "</span></div>" +
+
+        "<div class=\"alert-body\">" + a.alert_body + "</div>" +
+
+        "<div class=\"alert-meta\">" + a.company_name + " - " + a.created_at + "</div></div>"
+
+    ).join("") || "<p>No alerts</p>";
+
+}
+
+
+
+async function loadInvestors() {
+
+    try {
+
+        const res = await fetch("/api/investors");
+
+        investorsData = await res.json();
+
+        document.getElementById("investorsList").innerHTML = investorsData.map(inv => 
+
+            "<div class=\"investor-card\">" +
+
+            "<h3>" + inv.firm_name + "</h3>" +
+
+            "<div class=\"thesis\">" + (inv.thesis || "") + "</div>" +
+
+            "<span class=\"fit-score " + inv.fit_label + "\">" + inv.fit_label + " (" + inv.fit_score + ")</span></div>"
+
+        ).join("") || "<p>No investors tracked</p>";
+
+    } catch (e) {
+
+        document.getElementById("investorsList").innerHTML = "<p>Error loading investors</p>";
+
+    }
+
+}
+
+
+
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDetailPanel(); });
+
+// Render relative scan age on each competitor card (e.g., "3h ago", "2d ago")
+function relativeAge(iso) {
+    if (!iso) return "";
+    // Treat stored timestamps as UTC. The DB serializer emits "YYYY-MM-DD HH:MM:SS" without a Z;
+    // add one explicitly so JS doesn't interpret it as local time.
+    const normalized = iso.includes("T") ? iso : iso.replace(" ", "T");
+    const tsStr = normalized.endsWith("Z") || /[+-]\d\d:?\d\d$/.test(normalized) ? normalized : normalized + "Z";
+    const then = new Date(tsStr);
+    if (isNaN(then)) return "";
+    const sec = Math.max(0, Math.floor((Date.now() - then.getTime()) / 1000));
+    if (sec < 60)        return "just now";
+    if (sec < 3600)      return Math.floor(sec / 60) + "m ago";
+    if (sec < 86400)     return Math.floor(sec / 3600) + "h ago";
+    if (sec < 86400 * 7) return Math.floor(sec / 86400) + "d ago";
+    if (sec < 86400 * 30)return Math.floor(sec / (86400 * 7)) + "w ago";
+    return Math.floor(sec / (86400 * 30)) + "mo ago";
+}
+document.querySelectorAll(".scan-age[data-scanned-at]").forEach(el => {
+    const age = relativeAge(el.dataset.scannedAt);
+    if (age) el.textContent = "Scanned " + age;
+    else el.remove();
+});
+
+</script>
+
+{% endblock %}
+

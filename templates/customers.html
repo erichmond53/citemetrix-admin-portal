@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% import '_macros.html' as macros %}
+
+{% block title %}Customers{% endblock %}
+{% block page_title %}Customers{% endblock %}
+
+{% block content %}
+
+{% if data.error %}
+<div class="alert alert-danger">{{ data.error }}</div>
+{% endif %}
+
+<!-- Search + summary -->
+<div class="card">
+    <div class="card-header" style="margin-bottom:0;">
+        <div style="display:flex; align-items:center; gap:24px; width:100%;">
+            <form method="get" action="/customers" style="flex:1; max-width:480px;">
+                <div style="display:flex; gap:8px;">
+                    <input
+                        type="search"
+                        name="q"
+                        value="{{ data.q | e }}"
+                        placeholder="Search by email, name, or domain…"
+                        style="flex:1; padding:10px 14px; border:1px solid var(--gray-300); border-radius:8px; font-size:14px; font-family:inherit;"
+                        autofocus
+                    >
+                    <button type="submit" class="btn btn-primary">Search</button>
+                    {% if data.q %}
+                    <a href="/customers" class="btn btn-secondary">Clear</a>
+                    {% endif %}
+                </div>
+            </form>
+            <div style="display:flex; gap:24px; font-size:13px; color:var(--gray-600);">
+                <div><strong style="color:var(--gray-900);">{{ data.total_users }}</strong> total</div>
+                <div><strong style="color:var(--success);">{{ data.active_users }}</strong> active in 30d</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- User list -->
+<div class="card" style="padding:0; overflow:hidden;">
+    {% if data.users %}
+    <table class="table">
+        <thead>
+            <tr>
+                <th>User</th>
+                <th>Plan</th>
+                <th>Domains</th>
+                <th>Last Activity</th>
+                <th>Health</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in data.users %}
+            <tr style="cursor:pointer;" onclick="window.location='/customers/{{ u.user_id }}'">
+                <td>
+                    <div style="font-weight:500;">{{ u.display_name or u.user_email.split('@')[0] }}</div>
+                    <div style="font-size:12px; color:var(--gray-500);">{{ u.user_email }}</div>
+                </td>
+                <td>
+                    {{ macros.subscription_badge(u.last_subscription_event, u.current_tier) }}
+                </td>
+                <td>{{ u.domain_count or 0 }}</td>
+                <td>
+                    {% if u.last_activity_at %}
+                        <span style="font-size:13px;">{{ u.last_activity_at.strftime('%b %d') }}</span>
+                        <span style="font-size:11px; color:var(--gray-500); display:block;">{{ u.last_activity_at.strftime('%H:%M UTC') }}</span>
+                    {% else %}
+                        <span style="color:var(--gray-400); font-size:13px;">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if u.internal_errors_7d and u.internal_errors_7d > 0 %}
+                        <span class="badge badge-danger" title="Internal errors in last 7 days">
+                            {{ u.internal_errors_7d }} bug{% if u.internal_errors_7d > 1 %}s{% endif %}
+                        </span>
+                    {% endif %}
+                    {% if u.actionable_errors_24h and u.actionable_errors_24h > 0 %}
+                        <span class="badge badge-warning" title="Quota or auth errors in last 24h">
+                            BYOK issue
+                        </span>
+                    {% endif %}
+                    {% if not u.internal_errors_7d and not u.actionable_errors_24h %}
+                        <span style="color:var(--success); font-size:16px;" title="No issues">&#10003;</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="padding:48px; text-align:center; color:var(--gray-500);">
+        {% if data.q %}
+            No customers match "<strong>{{ data.q | e }}</strong>"
+            <div style="margin-top:8px; font-size:13px;">
+                <a href="/customers" style="color:var(--primary);">Show all customers</a>
+            </div>
+        {% else %}
+            No customers found.
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}

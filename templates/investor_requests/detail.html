@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+
+{% block title %}Investor Request{% endblock %}
+{% block page_title %}Investor Request{% endblock %}
+
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+        <div class="alert alert-{{ 'danger' if cat == 'error' else cat }}" style="margin-bottom:16px;">{{ msg }}</div>
+    {% endfor %}
+{% endwith %}
+
+<div style="margin-bottom:16px;">
+    <a href="/investor-requests" style="font-size:13px; color:var(--gray-500);">&larr; All requests</a>
+</div>
+
+{% if error %}
+<div class="alert alert-danger">
+    <strong>Could not load this request:</strong> {{ error }}
+    {% if error_detail %}
+        <pre style="margin-top:8px; font-size:11px; background:rgba(0,0,0,0.04); padding:8px; border-radius:4px; overflow-x:auto;">{{ error_detail | tojson(indent=2) }}</pre>
+    {% endif %}
+</div>
+{% else %}
+
+<!-- Header card with name + status badge + key actions -->
+<div class="card" style="margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px;">
+        <div>
+            <h2 style="margin:0 0 6px 0; font-size:22px;">{{ application.investor_name }}</h2>
+            <div style="color:var(--gray-500); font-size:14px;">
+                {{ application.investor_email }}
+                {% if application.investor_company %} &middot; {{ application.investor_company }}{% endif %}
+                {% if application.investor_title %} &middot; {{ application.investor_title }}{% endif %}
+            </div>
+            <div style="margin-top:10px;">
+                <span class="{{ application._status_badge.css }}" style="display:inline-block; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:500;">{{ application._status_badge.label }}</span>
+                <span style="margin-left:12px; font-size:12px; color:var(--gray-500);">Application #{{ application.id }} &middot; submitted {{ application.created_at }}</span>
+            </div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            {% if actions.can_grant %}
+            <form method="POST" action="/investor-requests/{{ application.id }}/grant-access" onsubmit="return confirm('Grant Drive access to {{ application.investor_email }}? They will be emailed the link.');" style="display:inline;">
+                <button type="submit" class="btn btn-primary">Grant Access</button>
+            </form>
+            {% endif %}
+            {% if actions.can_revoke %}
+            <form method="POST" action="/investor-requests/{{ application.id }}/revoke-access" onsubmit="return confirm('Revoke Drive access from {{ application.investor_email }}?');" style="display:inline;">
+                <button type="submit" class="btn btn-danger">Revoke Access</button>
+            </form>
+            {% endif %}
+            {% if actions.can_resend %}
+            <form method="POST" action="/investor-requests/{{ application.id }}/resend-nda" onsubmit="return confirm('Resend the NDA to {{ application.investor_email }}?');" style="display:inline;">
+                <button type="submit" class="btn btn-secondary">Resend NDA</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Two-column: investor details + NDA timeline -->
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">Investor Details</h2></div>
+        <div style="padding:4px 0;">
+            <dl style="margin:0; font-size:14px;">
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Name</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.investor_name }}</dd>
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Email</dt>
+                <dd style="margin:4px 0 0 0;"><a href="mailto:{{ application.investor_email }}">{{ application.investor_email }}</a></dd>
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Company</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.investor_company or '—' }}</dd>
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Title</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.investor_title or '—' }}</dd>
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Phone</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.investor_phone or '—' }}</dd>
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Address</dt>
+                <dd style="margin:4px 0 0 0; white-space:pre-wrap;">{{ application.investor_address or '—' }}</dd>
+
+                {% if application.investor_notes %}
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Investor's Notes</dt>
+                <dd style="margin:4px 0 0 0; white-space:pre-wrap;">{{ application.investor_notes }}</dd>
+                {% endif %}
+            </dl>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h2 class="card-title">NDA &amp; Access Timeline</h2></div>
+        <div style="padding:4px 0;">
+            <dl style="margin:0; font-size:14px;">
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Application Submitted</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.created_at }}</dd>
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">NDA Sent</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.nda_sent_at or '—' }}</dd>
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Investor Signed</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.investor_signed_at or '—' }}</dd>
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Company Countersigned</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.company_signed_at or '—' }}</dd>
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">NDA Completed</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.nda_completed_at or '—' }}</dd>
+
+                {% if application.nda_pdf_url %}
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Signed NDA PDF</dt>
+                <dd style="margin:4px 0 0 0;"><a href="{{ application.nda_pdf_url }}" target="_blank">Download PDF</a></dd>
+                {% endif %}
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Drive Shared</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.drive_shared_at or '—' }}</dd>
+
+                {% if application.drive_revoked_at %}
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">Drive Revoked</dt>
+                <dd style="margin:4px 0 0 0;">{{ application.drive_revoked_at }}</dd>
+                {% endif %}
+
+                <dt style="color:var(--gray-500); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-top:14px;">BoldSign Doc ID</dt>
+                <dd style="margin:4px 0 0 0; font-family:monospace; font-size:12px; color:var(--gray-500);">{{ application.boldsign_document_id or '—' }}</dd>
+            </dl>
+        </div>
+    </div>
+</div>
+
+<!-- Admin notes (editable) -->
+<div class="card" style="margin-top:20px;">
+    <div class="card-header"><h2 class="card-title">Admin Notes</h2></div>
+    <form method="POST" action="/investor-requests/{{ application.id }}/notes">
+        <textarea name="notes" rows="5" style="width:100%; padding:10px; border:1px solid var(--gray-200); border-radius:6px; font-family:inherit; font-size:14px;" placeholder="Internal notes — not visible to the investor.">{{ application.admin_notes or '' }}</textarea>
+        <div style="margin-top:10px; text-align:right;">
+            <button type="submit" class="btn btn-primary">Save Notes</button>
+        </div>
+    </form>
+</div>
+
+<!-- Submission metadata -->
+<div style="margin-top:20px; padding:12px 16px; background:var(--gray-50); border-radius:6px; font-size:11px; color:var(--gray-500); font-family:monospace;">
+    Submitted from {{ application.ip_address or 'unknown' }}
+    {% if application.user_agent %} &middot; {{ application.user_agent }}{% endif %}
+</div>
+
+{% endif %}{# end if not error #}
+
+{% endblock %}

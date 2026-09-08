@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+
+{% block title %}Demo Simulator{% endblock %}
+
+{% block page_title %}Demo Simulator{% endblock %}
+
+{% block content %}
+
+<div class="card" style="max-width: 720px;">
+    <div class="card-header">
+        <h2 class="card-title">Fire demo alert</h2>
+    </div>
+
+    <p style="color: var(--gray-500); margin: 0 0 20px;">
+        Generates a random BYOK key-health alert on the operator's PWA. Different
+        platform, error category, and domain every click. The PWA receives a push
+        notification within 2&ndash;3 seconds; tapping it opens directly on the
+        domain that owns the alert, with the appropriate action button (where one
+        applies — quota and auth alerts have a billing-page link, rate-limit and
+        outage alerts don't).
+    </p>
+
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+        <button id="demo-fire-btn" class="btn btn-primary"
+                style="font-size: 16px; padding: 14px 24px; width: fit-content;">
+            Fire random demo alert
+        </button>
+
+        <div id="demo-result" style="font-size: 14px; min-height: 22px;"></div>
+    </div>
+
+    <details style="margin-top: 28px;">
+        <summary style="cursor: pointer; color: var(--gray-600); font-size: 13px; font-weight: 500;">
+            Pin a specific scenario (rehearsal)
+        </summary>
+        <div style="margin-top: 14px; display: grid; gap: 10px; grid-template-columns: 1fr 1fr 1fr;">
+            <label style="font-size: 12px; color: var(--gray-600);">
+                Platform
+                <select id="pin-platform" class="form-control" style="width: 100%;">
+                    <option value="">(random)</option>
+                    <option value="chatgpt">ChatGPT</option>
+                    <option value="claude">Claude</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="grok">Grok</option>
+                    <option value="deepseek">DeepSeek</option>
+                    <option value="copilot">Copilot</option>
+                    <option value="mistral">Mistral</option>
+                    <option value="perplexity">Perplexity</option>
+                </select>
+            </label>
+            <label style="font-size: 12px; color: var(--gray-600);">
+                Category
+                <select id="pin-category" class="form-control" style="width: 100%;">
+                    <option value="">(random)</option>
+                    <option value="upstream_quota">Quota exceeded (critical, has action button)</option>
+                    <option value="upstream_auth">Key rejected (critical, has action button)</option>
+                    <option value="upstream_rate_limit">Rate limited (warn)</option>
+                    <option value="upstream_outage">Service issue (warn)</option>
+                </select>
+            </label>
+            <label style="font-size: 12px; color: var(--gray-600);">
+                Domain
+                <select id="pin-domain" class="form-control" style="width: 100%;">
+                    <option value="random">(random monitored)</option>
+                    {% for id, name in monitored_domains %}
+                    <option value="{{ id }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </div>
+    </details>
+</div>
+
+{% if is_admin %}
+<div class="card" style="max-width: 720px; margin-top: 24px; border-left: 4px solid var(--danger, #dc2626);">
+    <div class="card-header">
+        <h2 class="card-title">Flush Demo Account</h2>
+    </div>
+
+    <p style="color: var(--gray-500); margin: 0 0 16px;">
+        Resets <code>{{ demo_flush_email }}</code> to a clean slate so the
+        onboarding wizard launches from Step&nbsp;1 for a live demo. Wipes all
+        domains, citations, scans, brand facts, competitors, stored API keys,
+        and wizard flags for that account. Other accounts are unaffected
+        &mdash; the target email is hardcoded in code.
+    </p>
+
+    <p style="font-size: 13px; margin: 0 0 20px; padding: 10px 14px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 6px; color: #9a3412;">
+        <strong>Connected to:</strong> <code>{{ cm_db_name }}</code>
+        &mdash; this is the database that will be modified.
+    </p>
+
+    <div style="display: flex; flex-direction: column; gap: 16px;">
+        <button id="demo-flush-btn" class="btn btn-danger"
+                data-db-name="{{ cm_db_name }}"
+                data-email="{{ demo_flush_email }}"
+                style="font-size: 16px; padding: 14px 24px; width: fit-content;
+                       background: var(--danger, #dc2626); color: white;">
+            Flush {{ demo_flush_email }}
+        </button>
+
+        <div id="demo-flush-result" style="font-size: 14px; min-height: 22px;"></div>
+    </div>
+</div>
+
+<script>
+(function () {
+    const btn = document.getElementById('demo-flush-btn');
+    const out = document.getElementById('demo-flush-result');
+    const dbName = btn.getAttribute('data-db-name');
+    const email  = btn.getAttribute('data-email');
+
+    btn.addEventListener('click', async function () {
+        // Explicit confirmation that names BOTH the email and the database,
+        // so there can be no ambiguity about what's being wiped or where.
+        const msg = 'This will wipe ALL domains, settings, and API keys for\n' +
+                    '\n  ' + email + '\n\n' +
+                    'on the database:\n\n  ' + dbName + '\n\n' +
+                    'This is intentional for demo prep. Proceed?';
+        if (!window.confirm(msg)) return;
+
+        btn.disabled = true;
+        const originalText = btn.textContent;
+        btn.textContent = 'Flushing…';
+        out.textContent = '';
+        out.style.color = '';
+
+        try {
+            const r = await fetch('/api/demo-flush-account', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email }),
+            });
+            const data = await r.json();
+            if (r.ok && data.success) {
+                out.style.color = 'var(--success)';
+                out.innerHTML =
+                    '<strong>✓ Done.</strong> ' +
+                    escapeHtmlFlush(data.message);
+            } else {
+                out.style.color = 'var(--danger)';
+                const errMsg = data.error || data.message || ('HTTP ' + r.status);
+                out.innerHTML = '<strong>✗</strong> ' + escapeHtmlFlush(errMsg);
+            }
+        } catch (e) {
+            out.style.color = 'var(--danger)';
+            out.innerHTML = '<strong>✗</strong> ' + escapeHtmlFlush(e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    });
+
+    function escapeHtmlFlush(s) {
+        const div = document.createElement('div');
+        div.textContent = String(s == null ? '' : s);
+        return div.innerHTML;
+    }
+})();
+</script>
+{% endif %}
+
+<script>
+(function () {
+    const btn = document.getElementById('demo-fire-btn');
+    const out = document.getElementById('demo-result');
+    const pinPlatform = document.getElementById('pin-platform');
+    const pinCategory = document.getElementById('pin-category');
+    const pinDomain = document.getElementById('pin-domain');
+
+    btn.addEventListener('click', async function () {
+        btn.disabled = true;
+        const originalText = btn.textContent;
+        btn.textContent = 'Firing…';
+        out.textContent = '';
+        out.style.color = '';
+
+        const payload = {};
+        if (pinPlatform.value) payload.platform = pinPlatform.value;
+        if (pinCategory.value) payload.category = pinCategory.value;
+        if (pinDomain.value) payload.domain_id = pinDomain.value;
+
+        try {
+            const r = await fetch('/api/demo-alert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await r.json();
+
+            if (r.ok && data.success) {
+                out.style.color = 'var(--success)';
+                out.innerHTML =
+                    '<strong>✓ Fired:</strong> ' +
+                    escapeHtml(data.title) +
+                    ' &rarr; ' +
+                    escapeHtml(data.domain_name) +
+                    ' <span style="color: var(--gray-500);">(alert #' +
+                    data.alert_id + ', ' + escapeHtml(data.severity) + ')</span>';
+            } else {
+                out.style.color = 'var(--danger)';
+                const msg = data.error || data.message || ('HTTP ' + r.status);
+                out.innerHTML = '<strong>✗</strong> ' + escapeHtml(msg);
+            }
+        } catch (e) {
+            out.style.color = 'var(--danger)';
+            out.innerHTML = '<strong>✗</strong> ' + escapeHtml(e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    });
+
+    function escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = String(s == null ? '' : s);
+        return div.innerHTML;
+    }
+})();
+</script>
+
+{% endblock %}

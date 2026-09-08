@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Roadmap{% endblock %}
+{% block content %}
+<div style="max-width:1240px;margin:0 auto;padding:24px;">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+    <h1 style="margin:0;font-size:26px;">Product Roadmap</h1>
+    <span style="color:#8798a6;font-size:13px;">Internal source of truth &middot; not public &middot; published to the investor data room (items marked <em>investor</em>)</span>
+  </div>
+  {% if role in ['admin', 'operations'] %}
+  <form method="post" action="{{ url_for('roadmap_publish') }}" onsubmit="return confirm('Publish the investor-flagged roadmap items to the investor data room now?');" style="margin:12px 0 0;">
+    <button type="submit" style="background:#00A88A;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-size:14px;font-weight:600;cursor:pointer;">&#128228; Publish to investor data room</button>
+    <span style="color:#8798a6;font-size:12px;margin-left:8px;">Renders the <em>investor</em>-flagged items into a confidential Google Doc in the Drive folder shared with NDA-signed investors.</span>
+  </form>
+  {% endif %}
+  {% if data.error %}<div style="background:#fee2e2;border:1px solid #fecaca;color:#991b1b;padding:10px 14px;border-radius:8px;margin:12px 0;">{{ data.error }}</div>{% endif %}
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:18px;">
+    {% for b in buckets %}
+    <div style="background:#f4f7f9;border:1px solid #e3e9ee;border-radius:12px;padding:14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin:0 0 12px;">
+        <h2 style="text-transform:capitalize;font-size:16px;margin:0;">{{ b }}</h2>
+        <span style="background:#e3e9ee;color:#516170;font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;">{{ data.buckets[b]|length }}</span>
+      </div>
+
+      {% for item in data.buckets[b] %}
+      <div style="background:#fff;border:1px solid #e3e9ee;border-radius:10px;padding:11px;margin-bottom:11px;">
+        <form method="post" action="{{ url_for('roadmap_save') }}">
+          <input type="hidden" name="id" value="{{ item.id }}">
+          <input type="text" name="title" value="{{ item.title|e }}" style="width:100%;font-weight:600;font-size:14px;border:0;border-bottom:1px solid #eee;padding:4px 0;margin-bottom:6px;">
+          <textarea name="description" rows="2" style="width:100%;border:1px solid #eee;border-radius:5px;padding:5px;font-size:13px;resize:vertical;">{{ item.description or '' }}</textarea>
+          <div style="display:flex;gap:6px;margin-top:7px;align-items:center;flex-wrap:wrap;">
+            <select name="bucket" style="font-size:12px;padding:2px;">
+              {% for bb in buckets %}<option value="{{ bb }}" {% if bb==item.bucket %}selected{% endif %}>{{ bb }}</option>{% endfor %}
+            </select>
+            <input type="text" name="status" value="{{ item.status or '' }}" placeholder="status" style="width:76px;font-size:12px;padding:2px 4px;">
+            <input type="number" name="sort_order" value="{{ item.sort_order }}" title="sort order" style="width:50px;font-size:12px;padding:2px 4px;">
+            <label style="font-size:11px;color:#516170;"><input type="checkbox" name="is_published" {% if item.is_published %}checked{% endif %}> investor</label>
+            <button type="submit" style="margin-left:auto;font-size:12px;padding:3px 12px;cursor:pointer;">Save</button>
+          </div>
+        </form>
+        <form method="post" action="{{ url_for('roadmap_delete', rid=item.id) }}" onsubmit="return confirm('Delete this roadmap item?');" style="text-align:right;margin-top:4px;">
+          <button type="submit" style="font-size:11px;color:#c0392b;background:none;border:0;cursor:pointer;padding:0;">delete</button>
+        </form>
+      </div>
+      {% endfor %}
+
+      <form method="post" action="{{ url_for('roadmap_save') }}" style="border:1px dashed #cbd5e1;border-radius:10px;padding:11px;background:#fff;">
+        <input type="hidden" name="bucket" value="{{ b }}">
+        <input type="hidden" name="is_published" value="1">
+        <input type="text" name="title" placeholder="+ Add to {{ b }}" required style="width:100%;font-size:13px;border:0;border-bottom:1px solid #eee;padding:4px 0;margin-bottom:6px;">
+        <textarea name="description" rows="2" placeholder="Description (what &amp; why)" style="width:100%;border:1px solid #eee;border-radius:5px;padding:5px;font-size:13px;resize:vertical;"></textarea>
+        <button type="submit" style="margin-top:7px;font-size:12px;padding:3px 14px;cursor:pointer;">Add</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

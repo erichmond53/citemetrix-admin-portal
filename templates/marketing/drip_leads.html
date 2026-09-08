@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Drip Leads{% endblock %}
+{% block content %}
+<style>
+.ld-upload { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:20px; margin-bottom:24px; }
+.ld-upload-row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+.ld-upload-row .fg { flex:1; min-width:180px; }
+.ld-upload-row label { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+.ld-upload-row input[type=text] { width:100%; padding:10px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box; }
+.ld-status { margin-top:12px; padding:10px 14px; border-radius:8px; font-size:14px; display:none; }
+.ld-status.success{ display:block; background:#F0FDF4; color:#166534 } .ld-status.error{ display:block; background:#FEF2F2; color:#991B1B }
+.ld-table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--gray-200); border-radius:12px; overflow:hidden; }
+.ld-table th { text-align:left; font-size:11px; text-transform:uppercase; color:var(--gray-500); padding:10px 14px; border-bottom:1px solid var(--gray-200); }
+.ld-table td { padding:12px 14px; border-bottom:1px solid var(--gray-100); font-size:14px; }
+</style>
+
+<div class="grid grid-3" style="margin-bottom:24px;">
+  <div class="stat-card"><div class="stat-label">Active Leads</div><div class="stat-value">{{ total_leads }}</div></div>
+  <div class="stat-card"><div class="stat-label">Unsubscribed</div><div class="stat-value">{{ unsub_count }}</div></div>
+  <div class="stat-card"><div class="stat-label">Batches</div><div class="stat-value">{{ batches|length }}</div></div>
+</div>
+
+<div class="ld-upload">
+  <div class="ld-upload-row">
+    <div class="fg"><label>Batch name</label><input type="text" id="ld-batch-name" placeholder="e.g. Marblism batch 2026-09-03"></div>
+    <div class="fg"><label>Source (optional)</label><input type="text" id="ld-source" placeholder="e.g. Marblism LinkedIn"></div>
+    <label class="btn-p" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;background:var(--primary);color:#fff;padding:10px 18px;border-radius:8px;font-weight:500;">
+      &#128228; Upload CSV<input type="file" id="ld-file" accept=".csv,text/csv" style="display:none;" onchange="ldUpload()">
+    </label>
+  </div>
+  <div style="font-size:12px;color:var(--gray-500);margin-top:8px;">CSV needs at least an email column (Email / Name or First/Last Name / Company all auto-detected). Leads already in the system (by email) are skipped, not re-added.</div>
+  <div class="ld-status" id="ld-status"></div>
+</div>
+
+<table class="ld-table">
+  <thead><tr><th>Batch</th><th>Source</th><th>New</th><th>Duplicates skipped</th><th>Current leads</th><th>Uploaded</th></tr></thead>
+  <tbody>
+  {% for b in batches %}
+    <tr>
+      <td>{{ b.name }}</td>
+      <td>{{ b.source or '—' }}</td>
+      <td>{{ b.new_count }}</td>
+      <td style="color:var(--gray-500);">{{ b.dup_count }}</td>
+      <td>{{ b.current_lead_count }}</td>
+      <td style="color:var(--gray-500);">{{ b.created_at }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" style="text-align:center;color:var(--gray-500);padding:30px;">No batches uploaded yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<script>
+async function ldUpload(){
+  const fileInput = document.getElementById('ld-file');
+  const file = fileInput.files && fileInput.files[0];
+  const batchName = document.getElementById('ld-batch-name').value.trim();
+  const status = document.getElementById('ld-status');
+  if (!file) return;
+  if (!batchName) { status.className='ld-status error'; status.textContent='Enter a batch name first.'; fileInput.value=''; return; }
+  status.className = 'ld-status'; status.textContent = '';
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('batch_name', batchName);
+  fd.append('source', document.getElementById('ld-source').value.trim());
+  try {
+    const r = await fetch('/api/drip-leads/upload', {method:'POST', body: fd});
+    const j = await r.json();
+    fileInput.value = '';
+    if (!r.ok) { status.className='ld-status error'; status.textContent = j.error || 'Upload failed.'; return; }
+    status.className = 'ld-status success';
+    status.textContent = `Imported ${j.new_count} new leads (${j.dup_count} already existed, skipped) from ${j.total} rows.`;
+    setTimeout(() => location.reload(), 1500);
+  } catch(e) {
+    status.className='ld-status error'; status.textContent = 'Upload failed.'; fileInput.value='';
+  }
+}
+</script>
+{% endblock %}

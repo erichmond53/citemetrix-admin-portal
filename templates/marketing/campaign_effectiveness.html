@@ -1,0 +1,320 @@
+{% extends "base.html" %}
+
+{% block title %}Measure — Effectiveness{% endblock %}
+{% block page_title %}Measure{% endblock %}
+
+{% block content %}
+{% include "marketing/_measure_tabs.html" %}
+{% import 'marketing/_charts.html' as charts %}
+{% import 'marketing/_banners.html' as banners %}
+{% if not data %}
+  <div class="card"><p style="color:var(--gray-600);">No data yet. Run <code>venv/bin/python jobs/campaign_effectiveness.py</code> or wait for the daily cron.</p></div>
+{% else %}
+{% set k = data.kpis %}
+<p style="color:var(--gray-500); font-size:13px; margin-bottom:20px;">
+  citemetrix.com &middot; last {{ data.range_days }} days &middot; generated {{ data.generated }} &middot;
+  campaign &rarr; session &rarr; lead &rarr; sale, joined on email. Revenue attribution is wired and fills in as sales land.
+</p>
+
+{% if anomalies %}
+<div style="margin-bottom:18px;">
+  {% for a in anomalies %}{{ banners.banner(a.severity, a.text, a.label) }}{% endfor %}
+</div>
+{% endif %}
+
+<div class="grid grid-4" style="margin-bottom:20px;">
+  <div class="stat-card">
+    <div class="stat-label">Leads this week</div>
+    <div class="stat-value">{{ k.leads_week }}</div>
+    <div style="margin-top:8px;font-size:13px;color:{{ 'var(--success)' if k.leads_week >= k.leads_prev else 'var(--gray-500)' }};">
+      {{ k.leads_prev }} last week</div>
+    {{ charts.sparkline(data.trends.leads_daily) }}
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Sessions ({{ data.range_days }}d)</div>
+    <div class="stat-value">{{ '{:,}'.format(k.ga_sessions) }}</div>
+    <div style="margin-top:8px;font-size:13px;color:var(--gray-500);">{{ '{:,}'.format(k.ga_engaged) }} engaged</div>
+    {{ charts.sparkline(data.trends.sessions_daily) }}
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Leads (all time)</div>
+    <div class="stat-value">{{ k.leads_total }}</div>
+    <div style="margin-top:8px;font-size:13px;color:var(--gray-500);">{{ k.converted }} converted to paid</div>
+    {{ charts.sparkline(data.trends.leads_cumulative) }}
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Paying customers &middot; revenue</div>
+    <div class="stat-value">{{ k.paying_customers }}</div>
+    <div style="margin-top:8px;font-size:13px;color:var(--gray-500);">${{ '%.2f'|format(k.revenue) }} to date</div>
+    <div style="margin-top:6px;font-size:11px;color:var(--gray-400);">completed, non-refunded subs only &middot; internal/test excluded</div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+  <div class="card-title" style="margin-bottom:12px;">Compare two campaigns</div>
+  <form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;">
+    <select name="ca" style="padding:7px 10px;border:1px solid var(--gray-300);border-radius:6px;min-width:210px;">
+      <option value="">&mdash; campaign A &mdash;</option>
+      {% for n in camp_names %}<option value="{{ n }}" {{ 'selected' if n == ca }}>{{ n }}</option>{% endfor %}
+    </select>
+    <span style="color:var(--gray-400);">vs</span>
+    <select name="cb" style="padding:7px 10px;border:1px solid var(--gray-300);border-radius:6px;min-width:210px;">
+      <option value="">&mdash; campaign B &mdash;</option>
+      {% for n in camp_names %}<option value="{{ n }}" {{ 'selected' if n == cb }}>{{ n }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary">Compare</button>
+    {% if compare %}<a href="/marketing/campaign-effectiveness" style="color:var(--gray-500);font-size:12px;">clear</a>{% endif %}
+  </form>
+  {% if ca and cb and not compare %}
+  <p style="color:var(--gray-500);font-size:13px;margin-top:12px;">Couldn&#39;t find one of those campaigns in the current {{ data.range_days }}-day window.</p>
+  {% endif %}
+  {% if compare %}
+  <div style="overflow-x:auto;margin-top:16px;">
+  <table class="table">
+    <thead><tr>
+      <th>Metric</th>
+      <th style="text-align:right;">{{ compare.a_name }}</th>
+      <th style="text-align:right;">{{ compare.b_name }}</th>
+      <th style="text-align:right;">&Delta; (A&minus;B)</th>
+      <th style="text-align:center;">Winner</th>
+    </tr></thead>
+    <tbody>
+    {% for r in compare.rows %}
+    <tr>
+      <td style="font-weight:500;">{{ r.label }}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;{{ 'font-weight:700;color:var(--success);' if r.winner == 'a' }}">{{ r.a }}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;{{ 'font-weight:700;color:var(--success);' if r.winner == 'b' }}">{{ r.b }}</td>
+      <td style="text-align:right;color:var(--gray-500);font-variant-numeric:tabular-nums;">{{ r.delta }}</td>
+      <td style="text-align:center;">{% if r.winner == 'a' %}&#9664; A{% elif r.winner == 'b' %}B &#9654;{% else %}&mdash;{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-bottom:20px;">
+  <div class="card-title" style="margin-bottom:6px;">By list source</div>
+  <p style="color:var(--gray-400);font-size:12px;margin:0 0 12px;">All sends grouped by list source (from the utm_campaign tag). Rates are volume-weighted across each source&#39;s campaigns &mdash; the CT&nbsp;SOS vs DataZap read for the list-repeat decision.</p>
+  <div style="overflow-x:auto;">
+  <table class="table">
+    <thead><tr>
+      <th>Source</th><th style="text-align:right;">Sends</th><th style="text-align:right;">Total sent</th>
+      <th style="text-align:right;">Open</th><th style="text-align:right;">Click</th><th style="text-align:right;">Bounce</th>
+      <th style="text-align:right;">Sessions</th><th style="text-align:right;">Scans</th><th style="text-align:right;">Leads</th>
+    </tr></thead>
+    <tbody>
+      {% for r in source_rows %}
+      <tr>
+        <td style="font-weight:600;">{{ r.source }}</td>
+        <td style="text-align:right;">{{ r.campaigns }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.sent) }}</td>
+        <td style="text-align:right;">{{ r.open_rate }}%</td>
+        <td style="text-align:right;">{{ r.click_rate }}%</td>
+        <td style="text-align:right;color:{{ 'var(--danger)' if r.bounce_rate > 3 else ('var(--warning)' if r.bounce_rate > 2 else 'var(--gray-600)') }};">{{ r.bounce_rate }}%</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.sessions) }}</td>
+        <td style="text-align:right;">{{ r.scans }}</td>
+        <td style="text-align:right;font-weight:600;">{{ r.leads }}</td>
+      </tr>
+      {% endfor %}
+      {% if not source_rows %}<tr><td colspan="9" style="color:var(--gray-400);">No source-tagged campaigns.</td></tr>{% endif %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% set dv = data.deliverability %}
+{% if dv and dv.sent %}
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Email deliverability</div>
+    <span class="badge {{ {'healthy':'badge-success','warn':'badge-warning','critical':'badge-danger'}[dv.status] }}">{{ dv.status|capitalize }}</span>
+  </div>
+  <p style="color:var(--gray-500);font-size:13px;margin:-8px 0 16px;">
+    Your channel's health across all CiteMetrix sends. A complaint or bounce spike can throttle or blocklist your
+    sending domain &mdash; watch these more closely than any other number here.</p>
+  <div class="grid grid-4">
+    <div><div class="stat-label">Sent (all CiteMetrix)</div><div style="font-size:22px;font-weight:700;">{{ '{:,}'.format(dv.sent) }}</div></div>
+    <div>
+      <div class="stat-label">Bounce rate</div>
+      <div style="font-size:22px;font-weight:700;color:{{ 'var(--danger)' if dv.bounce_rate > 5 else ('var(--warning)' if dv.bounce_rate > 3 else 'var(--gray-800)') }};">{{ dv.bounce_rate }}%</div>
+      <div style="font-size:11px;color:var(--gray-400);">{{ '{:,}'.format(dv.bounced) }} &middot; keep under 3&ndash;5%</div>
+    </div>
+    <div>
+      <div class="stat-label">Complaint rate</div>
+      <div style="font-size:22px;font-weight:700;color:{{ 'var(--danger)' if dv.complaint_rate > 0.1 else 'var(--gray-800)' }};">{{ dv.complaint_rate }}%</div>
+      <div style="font-size:11px;color:var(--gray-400);">{{ '{:,}'.format(dv.complaints) }} &middot; keep under 0.1%</div>
+    </div>
+    <div>
+      <div class="stat-label">Unsub rate</div>
+      <div style="font-size:22px;font-weight:700;color:{{ 'var(--warning)' if dv.unsub_rate > 2 else 'var(--gray-800)' }};">{{ dv.unsub_rate }}%</div>
+      <div style="font-size:11px;color:var(--gray-400);">{{ '{:,}'.format(dv.unsubs) }} &middot; informational</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header"><div class="card-title">Per-campaign funnel &mdash; inbox click to sale</div></div>
+  <p style="color:var(--gray-500);font-size:13px;margin:-6px 0 16px;">
+    Sent/opened/clicked are from Sendy (read-only, pushed daily). Sessions &amp; on-page events are GA4 (anonymous).
+    Leads, customers &amp; revenue are the deterministic email join (leads &rarr; orders).
+    A campaign with clicks but no scans/leads is leaking between the landing page and the action.</p>
+  <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr>
+        <th>Campaign</th>
+        <th style="text-align:right;">Sent</th>
+        <th style="text-align:right;">Opened</th>
+        <th style="text-align:right;">Clicked</th>
+        <th style="text-align:right;">Sessions</th>
+        <th style="text-align:right;">Engaged</th>
+        <th style="text-align:right;">Form focus</th>
+        <th style="text-align:right;">Scan run</th>
+        <th style="text-align:right;">Leads</th>
+        <th style="text-align:right;">Customers</th>
+        <th style="text-align:right;">Revenue</th>
+      </tr></thead>
+      <tbody>
+      {% for c in data.campaigns %}
+        {% if c.sessions > 0 or c.leads > 0 or c.sent > 0 %}
+        <tr>
+          <td style="{% if c.campaign in ['(none)','(direct)'] %}color:var(--gray-400);{% else %}color:var(--gray-800);font-weight:600;{% endif %}">{{ c.campaign }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(c.sent) if c.sent else '—' }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ '{:,}'.format(c.opens) }}{% if c.sent %} <span style="font-size:11px;color:var(--gray-400);">{{ (100*c.opens/c.sent)|round(1) }}%</span>{% endif %}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ '{:,}'.format(c.clicks) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(c.sessions) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ '{:,}'.format(c.engaged) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ c.form_focus }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ c.scan_completed }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if c.leads > 0 %}color:var(--success);font-weight:700;{% endif %}">{% if c.leads > 0 %}<a href="/marketing/leads?campaign={{ c.campaign|urlencode }}" style="color:inherit;text-decoration:underline;">{{ c.leads }}</a>{% else %}{{ c.leads }}{% endif %}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ c.customers }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if c.revenue > 0 %}color:var(--success);font-weight:600;{% endif %}">${{ '%.0f'|format(c.revenue) }}</td>
+        </tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><div class="card-title">Leads &amp; revenue by channel</div></div>
+  <p style="color:var(--gray-500);font-size:13px;margin:-6px 0 16px;">
+    Which <em>source</em> produces leads that become paying customers. Source is captured first-party on landing
+    and stamped onto orders at checkout &mdash; so this fills in from this week's campaigns forward.</p>
+  <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr>
+        <th>Channel (source)</th>
+        <th style="text-align:right;">Leads</th>
+        <th style="text-align:right;">Converted</th>
+        <th style="text-align:right;">Customers</th>
+        <th style="text-align:right;">Revenue</th>
+      </tr></thead>
+      <tbody>
+      {% for s in data.by_source %}
+        <tr>
+          <td style="{% if s.source == '(none)' %}color:var(--gray-400);{% else %}color:var(--gray-800);font-weight:600;{% endif %}">{{ s.source }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if s.leads > 0 and s.source != '(none)' %}color:var(--success);font-weight:600;{% endif %}">{% if s.leads > 0 %}<a href="/marketing/leads?source={{ s.source|urlencode }}" style="color:inherit;text-decoration:underline;">{{ s.leads }}</a>{% else %}{{ s.leads }}{% endif %}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ s.converted }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ s.customers }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if s.revenue > 0 %}color:var(--success);font-weight:600;{% endif %}">${{ '%.0f'|format(s.revenue) }}</td>
+        </tr>
+      {% endfor %}
+      {% if not data.by_source %}<tr><td colspan="5" style="color:var(--gray-400);">No source data yet.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><div class="card-title">Landing pages &mdash; sessions &amp; leads</div></div>
+  <p style="color:var(--gray-500);font-size:13px;margin:-6px 0 16px;">Where visitors arrive. Click a lead count to see the underlying lead records.</p>
+  <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr><th>Page</th><th style="text-align:right;">Sessions</th><th style="text-align:right;">Engaged</th><th style="text-align:right;">Leads</th></tr></thead>
+      <tbody>
+      {% for lp in data.landing_pages %}
+        <tr>
+          <td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ lp.page }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(lp.sessions) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ '{:,}'.format(lp.engaged) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if lp.leads > 0 %}color:var(--success);font-weight:700;{% endif %}">{% if lp.leads > 0 %}<a href="/marketing/leads?landing_page={{ lp.page.split('?')[0]|urlencode }}" style="color:inherit;text-decoration:underline;">{{ lp.leads }}</a>{% else %}{{ lp.leads }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      {% if not data.landing_pages %}<tr><td colspan="4" style="color:var(--gray-400);">No landing-page data.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="grid grid-2" style="margin-bottom:24px;">
+  <div class="card" style="margin-bottom:0;">
+    <div class="card-header"><div class="card-title">Traffic by channel ({{ data.range_days }}d)</div></div>
+    {% set chmax = (data.channels.values()|list|max) if data.channels else 1 %}
+    {% for ch, n in data.channels.items()|sort(attribute='1', reverse=true) %}
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;">
+          <span style="color:var(--gray-700);">{{ ch }}</span>
+          <span style="color:var(--gray-500);font-variant-numeric:tabular-nums;">{{ '{:,}'.format(n) }}</span>
+        </div>
+        <div style="height:8px;background:var(--gray-100);border-radius:4px;overflow:hidden;">
+          <div style="height:100%;width:{{ (100 * n / chmax)|round(0, 'floor') }}%;background:var(--primary);border-radius:4px;"></div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="card" style="margin-bottom:0;">
+    <div class="card-header"><div class="card-title">Organic halo</div></div>
+    {% if data.halo %}
+      {% set h = data.halo[-1] %}
+      <div style="display:flex;gap:28px;flex-wrap:wrap;">
+        <div><div class="stat-label">Branded impressions</div><div style="font-size:24px;font-weight:700;">{{ '{:,}'.format(h.branded_impr) }}</div></div>
+        <div><div class="stat-label">Branded clicks</div><div style="font-size:24px;font-weight:700;">{{ h.branded_clicks }}</div></div>
+        <div><div class="stat-label">/check/ organic impr</div><div style="font-size:24px;font-weight:700;">{{ '{:,}'.format(h.check_impr) }}</div></div>
+      </div>
+      <p style="color:var(--gray-500);font-size:13px;margin-top:14px;">Week ending {{ h.week_end }}. Watch this rise 1&ndash;2 weeks after sends &mdash;
+        it's the sign email/social lifted organic. Full trend on <a href="/marketing/gsc-weekly" style="color:var(--primary);">GSC Weekly &rarr;</a></p>
+    {% else %}
+      <p style="color:var(--gray-500);font-size:13px;">No GSC snapshot yet — see <a href="/marketing/gsc-weekly" style="color:var(--primary);">GSC Weekly</a>.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><div class="card-title">Landing pages</div></div>
+  <p style="color:var(--gray-500);font-size:13px;margin:-6px 0 16px;">Where campaign &amp; organic traffic arrives, and which pages actually produce a lead.</p>
+  <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr>
+        <th>Landing page</th>
+        <th style="text-align:right;">Sessions</th>
+        <th style="text-align:right;">Engaged</th>
+        <th style="text-align:right;">Leads</th>
+        <th style="text-align:right;">Session &rarr; lead</th>
+      </tr></thead>
+      <tbody>
+      {% for p in data.landing_pages %}
+        <tr>
+          <td style="color:var(--gray-800);">{{ p.page }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(p.sessions) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ '{:,}'.format(p.engaged) }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if p.leads > 0 %}color:var(--success);font-weight:700;{% endif %}" title="On-page lead events (GA4, {{ data.range_days }}d) — not filterable to records, since leads don't store a landing page">{{ p.leads }}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ (100 * p.leads / p.sessions)|round(1) if p.sessions else '—' }}{{ '%' if p.sessions else '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if data.notes %}
+<p style="color:var(--gray-400);font-size:12px;">
+  {% for n in data.notes %}{{ n }}{% if not loop.last %} · {% endif %}{% endfor %}
+</p>
+{% endif %}
+{% endif %}
+{% endblock %}

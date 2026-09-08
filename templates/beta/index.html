@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+
+{% block title %}Users{% endblock %}
+
+{% block page_title %}Users{% endblock %}
+
+{% block content %}
+
+<style>
+
+.stats-strip { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+
+.stat-box { background: #fff; border: 1px solid var(--gray-200); border-radius: 10px; padding: 14px 20px; min-width: 100px; text-align: center; }
+
+.stat-box .num { font-size: 28px; font-weight: 700; }
+
+.stat-box .lbl { font-size: 11px; color: var(--gray-500); text-transform: uppercase; margin-top: 2px; }
+
+.stat-box.pending .num { color: var(--warning); }
+
+.stat-box.approved .num { color: var(--primary); }
+
+.stat-box.active .num { color: var(--success); }
+
+
+
+.tabs { display: flex; gap: 0; border-bottom: 2px solid var(--gray-200); margin-bottom: 20px; }
+
+.tab { padding: 12px 24px; cursor: pointer; font-weight: 500; color: var(--gray-500); border-bottom: 2px solid transparent; margin-bottom: -2px; }
+
+.tab:hover { color: var(--gray-700); }
+
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.tab-content { display: none; }
+
+.tab-content.active { display: block; }
+
+
+
+.user-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; border: 1px solid var(--gray-200); }
+
+.user-table th { text-align: left; padding: 12px 16px; background: var(--gray-50); font-size: 12px; text-transform: uppercase; color: var(--gray-500); }
+
+.user-table td { padding: 12px 16px; border-top: 1px solid var(--gray-100); font-size: 14px; vertical-align: top; }
+
+.user-table tr:hover { background: var(--gray-50); }
+
+.user-table .email { font-weight: 500; }
+
+.user-table .company { color: var(--gray-600); font-size: 13px; }
+
+.user-table .source { font-size: 12px; color: var(--gray-500); }
+
+.user-table .date { font-size: 13px; color: var(--gray-500); white-space: nowrap; }
+
+
+
+.status-badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+
+.status-badge.pending { background: #FEF9C3; color: #854D0E; }
+
+.status-badge.approved { background: #DBEAFE; color: #1E40AF; }
+
+.status-badge.active { background: #DCFCE7; color: #166534; }
+
+.status-badge.declined { background: #FEE2E2; color: #991B1B; }
+
+
+
+.tier-badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; text-transform: capitalize; }
+
+.tier-badge.beta { background: #E0E7FF; color: #3730A3; }
+
+.tier-badge.starter { background: #DBEAFE; color: #1E40AF; }
+
+.tier-badge.professional { background: #D1FAE5; color: #065F46; }
+
+.tier-badge.agency { background: #FEF3C7; color: #92400E; }
+
+.tier-badge.enterprise { background: #FCE7F3; color: #9D174D; }
+
+
+
+.expandable-row { cursor: pointer; }
+
+.expandable-row td:first-child::before { content: "▶"; margin-right: 8px; font-size: 10px; color: var(--gray-400); transition: transform 0.2s; display: inline-block; }
+
+.expandable-row.open td:first-child::before { transform: rotate(90deg); }
+
+.detail-row { display: none; }
+
+.detail-row.open { display: table-row; }
+
+.detail-row td { background: var(--gray-50); padding: 16px 16px 16px 40px; }
+
+.journey-timeline { display: flex; flex-direction: column; gap: 12px; }
+
+.journey-step { display: flex; align-items: flex-start; gap: 12px; }
+
+.journey-step .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--gray-300); margin-top: 4px; flex-shrink: 0; }
+
+.journey-step .dot.complete { background: var(--success); }
+
+.journey-step .dot.current { background: var(--primary); }
+
+.journey-step .info { flex: 1; }
+
+.journey-step .step-name { font-weight: 500; font-size: 13px; }
+
+.journey-step .step-date { font-size: 12px; color: var(--gray-500); }
+
+
+
+.paid-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+
+.paid-stat { background: var(--gray-100); padding: 12px; border-radius: 8px; text-align: center; }
+
+.paid-stat .num { font-size: 20px; font-weight: 600; }
+
+.paid-stat .lbl { font-size: 11px; color: var(--gray-500); }
+
+
+
+.monthly-breakdown { margin-top: 16px; }
+
+.monthly-breakdown h4 { font-size: 13px; color: var(--gray-500); margin: 0 0 8px; }
+
+.monthly-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--gray-200); font-size: 13px; }
+
+.monthly-item:last-child { border-bottom: none; }
+
+</style>
+
+
+
+{% if data.error %}<div class="alert alert-danger">{{ data.error }}</div>{% endif %}
+
+
+
+<div class="stats-strip">
+
+    <div class="stat-box"><div class="num">{{ data.stats.total or 0 }}</div><div class="lbl">Total Signups</div></div>
+
+    <div class="stat-box pending"><div class="num">{{ data.stats.pending or 0 }}</div><div class="lbl">Pending</div></div>
+
+    <div class="stat-box approved"><div class="num">{{ data.stats.approved or 0 }}</div><div class="lbl">Approved</div></div>
+
+    <div class="stat-box active"><div class="num">{{ data.stats.active or 0 }}</div><div class="lbl">Active</div></div>
+
+    <div class="stat-box"><div class="num">{{ data.paid_users | length }}</div><div class="lbl">Paid Users</div></div>
+
+</div>
+
+
+
+<div class="tabs">
+
+    <div class="tab active" data-tab="beta">Beta Users</div>
+
+    <div class="tab" data-tab="paid">Paid Users</div>
+
+    <div class="tab" data-tab="drip">Drip Campaigns</div>
+
+</div>
+
+
+
+<div id="beta" class="tab-content active">
+
+    <table class="user-table">
+
+        <thead>
+
+            <tr><th>User</th><th>Company</th><th>Status</th><th>Source</th><th>Signed Up</th></tr>
+
+        </thead>
+
+        <tbody>
+
+            {% for s in data.signups %}
+
+            <tr class="expandable-row" onclick="toggleRow(this)">
+
+                <td><div class="email">{{ s.email }}</div><div class="company">{{ s.name or '' }}</div></td>
+
+                <td>{{ s.company or '-' }}<br><span style="font-size:12px;color:var(--gray-500);">{{ s.role or '' }}</span></td>
+
+                <td><span class="status-badge {{ s.status or 'pending' }}">{{ s.status or 'pending' }}</span></td>
+
+                <td class="source">{{ s.utm_source or 'direct' }}</td>
+
+                <td class="date">{{ s.created_at.strftime('%b %d, %Y') if s.created_at else '-' }}</td>
+
+            </tr>
+
+            <tr class="detail-row">
+
+                <td colspan="5">
+
+                    <div class="journey-timeline">
+
+                        <div class="journey-step">
+
+                            <div class="dot complete"></div>
+
+                            <div class="info"><div class="step-name">Signed Up</div><div class="step-date">{{ s.created_at.strftime('%b %d, %Y %H:%M') if s.created_at else '-' }}</div></div>
+
+                        </div>
+
+                        <div class="journey-step">
+
+                            <div class="dot {% if s.approved_at %}complete{% elif s.status == 'approved' or s.status == 'active' %}complete{% endif %}"></div>
+
+                            <div class="info"><div class="step-name">Approved</div><div class="step-date">{{ s.approved_at.strftime('%b %d, %Y %H:%M') if s.approved_at else 'Pending' }}</div></div>
+
+                        </div>
+
+                        <div class="journey-step">
+
+                            <div class="dot {% if s.first_scan_at %}complete{% endif %}"></div>
+
+                            <div class="info"><div class="step-name">First Scan</div><div class="step-date">{{ s.first_scan_at.strftime('%b %d, %Y %H:%M') if s.first_scan_at else 'Not yet' }}</div></div>
+
+                        </div>
+
+                        <div class="journey-step">
+
+                            <div class="dot {% if s.converted_at %}complete{% endif %}"></div>
+
+                            <div class="info"><div class="step-name">Converted to Paid</div><div class="step-date">{{ s.converted_at.strftime('%b %d, %Y %H:%M') if s.converted_at else 'Not yet' }}</div></div>
+
+                        </div>
+
+                    </div>
+
+                </td>
+
+            </tr>
+
+            {% endfor %}
+
+        </tbody>
+
+    </table>
+
+</div>
+
+
+
+<div id="paid" class="tab-content">
+
+    <table class="user-table">
+
+        <thead>
+
+            <tr><th>User</th><th>Tier</th><th>Domains</th><th>API Calls</th><th>Since</th></tr>
+
+        </thead>
+
+        <tbody>
+
+            {% for u in data.paid_users %}
+
+            <tr class="expandable-row" onclick="toggleRow(this)">
+
+                <td><div class="email">{{ u.user_email }}</div><div class="company">{{ u.display_name or '' }}</div></td>
+
+                <td><span class="tier-badge {{ u.current_tier or 'beta' }}">{{ u.current_tier or 'beta' }}</span></td>
+
+                <td>{{ u.domain_count or 0 }}</td>
+
+                <td>{{ "{:,}".format(u.total_api_calls or 0) }}</td>
+
+                <td class="date">{{ u.subscribed_at.strftime('%b %d, %Y') if u.subscribed_at else '-' }}</td>
+
+            </tr>
+
+            <tr class="detail-row">
+
+                <td colspan="5">
+
+                    <div class="paid-stats">
+
+                        <div class="paid-stat"><div class="num">{{ u.domain_count or 0 }}</div><div class="lbl">Active Domains</div></div>
+
+                        <div class="paid-stat"><div class="num">{{ "{:,}".format(u.total_api_calls or 0) }}</div><div class="lbl">Total API Calls</div></div>
+
+                        <div class="paid-stat"><div class="num">{{ u.current_tier or 'beta' }}</div><div class="lbl">Current Tier</div></div>
+
+                    </div>
+
+                    <div style="color: var(--gray-500); font-size: 13px;">Monthly breakdown coming soon - requires payment integration data</div>
+
+                </td>
+
+            </tr>
+
+            {% endfor %}
+
+        </tbody>
+
+    </table>
+
+</div>
+
+
+
+<div id="drip" class="tab-content">
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px;">
+
+        {% for c in data.campaigns %}
+
+        <div style="background: #fff; border: 1px solid var(--gray-200); border-radius: 12px; padding: 20px;">
+
+            <h3 style="margin: 0 0 8px; font-size: 16px;">{{ c.name }}</h3>
+
+            <p style="color: var(--gray-500); font-size: 13px; margin: 0 0 12px;">{{ c.description or 'No description' }}</p>
+
+            <div style="display: flex; gap: 16px; font-size: 13px;">
+
+                <span><strong>{{ c.step_count or 0 }}</strong> steps</span>
+
+                <span><strong>{{ c.active_enrollments or 0 }}</strong> active</span>
+
+                <span><strong>{{ c.total_enrollments or 0 }}</strong> total</span>
+
+            </div>
+
+        </div>
+
+        {% else %}
+
+        <p style="color: var(--gray-500);">No drip campaigns configured</p>
+
+        {% endfor %}
+
+    </div>
+
+    
+
+    <h3 style="margin: 24px 0 12px; font-size: 16px;">Recent Sends</h3>
+
+    <table class="user-table">
+
+        <thead><tr><th>Subject</th><th>Step</th><th>Sent</th></tr></thead>
+
+        <tbody>
+
+            {% for s in data.recent_sends %}
+
+            <tr>
+
+                <td>{{ s.step_subject or 'No subject' }}</td>
+
+                <td>Step {{ s.step_order }}</td>
+
+                <td class="date">{{ s.sent_at.strftime('%b %d, %H:%M') if s.sent_at else '-' }}</td>
+
+            </tr>
+
+            {% else %}
+
+            <tr><td colspan="3" style="text-align: center; color: var(--gray-500);">No recent sends</td></tr>
+
+            {% endfor %}
+
+        </tbody>
+
+    </table>
+
+</div>
+
+
+
+<script>
+
+document.querySelectorAll(".tab").forEach(tab => {
+
+    tab.addEventListener("click", () => {
+
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+
+        document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+
+        tab.classList.add("active");
+
+        document.getElementById(tab.dataset.tab).classList.add("active");
+
+    });
+
+});
+
+
+
+function toggleRow(row) {
+
+    const detailRow = row.nextElementSibling;
+
+    if (detailRow && detailRow.classList.contains("detail-row")) {
+
+        row.classList.toggle("open");
+
+        detailRow.classList.toggle("open");
+
+    }
+
+}
+
+</script>
+
+{% endblock %}
+

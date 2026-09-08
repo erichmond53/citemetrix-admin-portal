@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Investor Requests{% endblock %}
+{% block page_title %}Investor Requests{% endblock %}
+
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+        <div class="alert alert-{{ 'danger' if cat == 'error' else cat }}" style="margin-bottom:16px;">{{ msg }}</div>
+    {% endfor %}
+{% endwith %}
+
+{% if error %}
+<div class="alert alert-danger">
+    <strong>Could not load investor requests:</strong> {{ error }}
+</div>
+{% endif %}
+
+<!-- Filter chips -->
+<div style="margin-bottom:20px; display:flex; gap:8px; flex-wrap:wrap;">
+    <a href="/investor-requests" class="btn {% if not status_filter %}btn-primary{% else %}btn-secondary{% endif %}" style="font-size:12px; padding:6px 14px;">All</a>
+    <a href="?status=nda_completed" class="btn {% if status_filter == 'nda_completed' %}btn-primary{% else %}btn-secondary{% endif %}" style="font-size:12px; padding:6px 14px;">Awaiting Access</a>
+    <a href="?status=nda_in_progress" class="btn {% if status_filter == 'nda_in_progress' %}btn-primary{% else %}btn-secondary{% endif %}" style="font-size:12px; padding:6px 14px;">NDA In Progress</a>
+    <a href="?status=access_granted" class="btn {% if status_filter == 'access_granted' %}btn-primary{% else %}btn-secondary{% endif %}" style="font-size:12px; padding:6px 14px;">Access Granted</a>
+    <a href="?status=pending" class="btn {% if status_filter == 'pending' %}btn-primary{% else %}btn-secondary{% endif %}" style="font-size:12px; padding:6px 14px;">Pending</a>
+    <a href="?status=nda_failed" class="btn {% if status_filter == 'nda_failed' %}btn-primary{% else %}btn-secondary{% endif %}" style="font-size:12px; padding:6px 14px;">NDA Failed</a>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">{{ applications|length }} request{{ '' if applications|length == 1 else 's' }}{% if status_filter %} (filtered: {{ status_filter }}){% endif %}</h2>
+    </div>
+
+    {% if applications %}
+    <table style="width:100%; border-collapse:collapse;">
+        <thead>
+            <tr style="border-bottom:2px solid var(--gray-200); font-size:12px; color:var(--gray-500); text-transform:uppercase; letter-spacing:0.5px;">
+                <th style="text-align:left; padding:10px 12px;">Investor</th>
+                <th style="text-align:left; padding:10px 12px;">Company</th>
+                <th style="text-align:left; padding:10px 12px;">Status</th>
+                <th style="text-align:left; padding:10px 12px;">Submitted</th>
+                <th style="text-align:right; padding:10px 12px;"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for app in applications %}
+            <tr style="border-bottom:1px solid var(--gray-100); font-size:14px;">
+                <td style="padding:12px;">
+                    <div style="font-weight:500;">{{ app.investor_name }}</div>
+                    <div style="font-size:12px; color:var(--gray-500);">{{ app.investor_email }}</div>
+                </td>
+                <td style="padding:12px;">
+                    <div>{{ app.investor_company or '—' }}</div>
+                    {% if app.investor_title %}<div style="font-size:12px; color:var(--gray-500);">{{ app.investor_title }}</div>{% endif %}
+                </td>
+                <td style="padding:12px;">
+                    <span class="{{ app._status_badge.css }}" style="display:inline-block; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:500;">{{ app._status_badge.label }}</span>
+                </td>
+                <td style="padding:12px; color:var(--gray-500); font-size:13px;">{{ app.created_at }}</td>
+                <td style="padding:12px; text-align:right;">
+                    <a href="/investor-requests/{{ app.id }}" class="btn btn-secondary" style="font-size:12px; padding:5px 12px;">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="padding:40px; text-align:center; color:var(--gray-500);">
+        {% if status_filter %}
+            No requests with status "{{ status_filter }}". <a href="/investor-requests">Show all</a>.
+        {% else %}
+            No investor requests yet.
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<div style="margin-top:16px; font-size:12px; color:var(--gray-500);">
+    Public form: <a href="https://citemetrix.com/investors/" target="_blank" style="color:var(--primary);">citemetrix.com/investors/</a>
+</div>
+
+{% endblock %}

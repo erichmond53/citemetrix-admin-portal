@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}GSC Weekly{% endblock %}
+{% block page_title %}GSC Weekly Baseline{% endblock %}
+
+{% block content %}
+
+{% if not reports %}
+  <div class="card">
+    <p style="color:var(--gray-600);">No weekly Search Console snapshots yet. The Monday cron
+    (<code>jobs/gsc_weekly.py</code>) writes the first one to <code>reports/gsc/</code> on its next run,
+    or run it manually: <code>cd /var/www/admin-portal &amp;&amp; venv/bin/python jobs/gsc_weekly.py</code>.</p>
+  </div>
+{% else %}
+  {% set r = reports[0] %}
+  <p style="color:var(--gray-500); font-size:13px; margin-bottom:24px;">
+    {{ r.site }} &middot; window <strong style="color:var(--gray-700);">{{ r.window.start }} &rarr; {{ r.window.end }}</strong>
+    &middot; generated {{ r.generated }} &middot; watching for email-driven branded-search lift (shows 1&ndash;2 weeks after sends)
+  </p>
+
+  <div class="grid grid-4" style="margin-bottom:24px;">
+    <div class="stat-card">
+      <div class="stat-label">Branded impressions</div>
+      <div class="stat-value">{{ '{:,}'.format(r.branded.impressions) }}</div>
+      {% if r.branded_delta %}
+        <div style="margin-top:8px; font-size:13px; font-weight:600; color:{{ 'var(--success)' if r.branded_delta.impressions >= 0 else 'var(--danger)' }};">
+          {{ '%+d'|format(r.branded_delta.impressions) }} <span style="color:var(--gray-400); font-weight:400;">vs {{ r.prev_window_end }}</span>
+        </div>
+      {% else %}
+        <div style="margin-top:8px; font-size:12px; color:var(--gray-400);">first week (no prior)</div>
+      {% endif %}
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Branded clicks</div>
+      <div class="stat-value">{{ '{:,}'.format(r.branded.clicks) }}</div>
+      {% if r.branded_delta %}
+        <div style="margin-top:8px; font-size:13px; font-weight:600; color:{{ 'var(--success)' if r.branded_delta.clicks >= 0 else 'var(--danger)' }};">
+          {{ '%+d'|format(r.branded_delta.clicks) }} <span style="color:var(--gray-400); font-weight:400;">vs prior week</span>
+        </div>
+      {% else %}
+        <div style="margin-top:8px; font-size:12px; color:var(--gray-400);">first week (no prior)</div>
+      {% endif %}
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Branded avg position</div>
+      <div class="stat-value">{{ r.branded.position }}</div>
+      <div style="margin-top:8px; font-size:13px; color:var(--gray-500);">CTR {{ '%.2f'|format(r.branded.ctr * 100) }}%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">/check/ page impressions</div>
+      <div class="stat-value">{{ '{:,}'.format(r.check.impressions) }}</div>
+      <div style="margin-top:8px; font-size:13px; color:var(--gray-500);">{{ r.check.clicks }} clicks &middot; not ranking organically yet</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><div class="card-title">Top non-branded queries (by impressions)</div></div>
+    <div style="overflow-x:auto;">
+      <table class="table">
+        <thead><tr>
+          <th>Query</th>
+          <th style="text-align:right;">Impr</th>
+          <th style="text-align:right;">Clicks</th>
+          <th style="text-align:right;">Position</th>
+        </tr></thead>
+        <tbody>
+        {% for q in r.nonbranded %}
+          <tr>
+            <td style="color:var(--gray-800);">{{ q.query }}</td>
+            <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ '{:,}'.format(q.impressions) }}</td>
+            <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ q.clicks }}</td>
+            <td style="text-align:right; font-variant-numeric:tabular-nums; {% if q.position < 10 %}color:var(--success); font-weight:600;{% else %}color:var(--gray-500);{% endif %}">{{ q.position }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% if reports|length > 1 %}
+  <div class="card">
+    <div class="card-header"><div class="card-title">Weekly history</div></div>
+    <div style="overflow-x:auto;">
+      <table class="table">
+        <thead><tr>
+          <th>Week ending</th>
+          <th style="text-align:right;">Branded impr</th>
+          <th style="text-align:right;">Branded clicks</th>
+          <th style="text-align:right;">/check/ impr</th>
+        </tr></thead>
+        <tbody>
+        {% for h in reports %}
+          <tr>
+            <td style="color:var(--gray-800);">{{ h.window.end }}</td>
+            <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ '{:,}'.format(h.branded.impressions) }}</td>
+            <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ h.branded.clicks }}</td>
+            <td style="text-align:right; font-variant-numeric:tabular-nums;">{{ '{:,}'.format(h.check.impressions) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card">
+    <p style="color:var(--gray-600); font-size:14px; margin:0;">
+      <strong>Weekly history</strong> and the <span style="color:var(--success); font-weight:600;">week-over-week deltas</span>
+      on the cards above appear once there are two or more snapshots &mdash; starting next Monday. Each week adds a row,
+      so branded-search lift from the campaigns reads at a glance.
+    </p>
+  </div>
+  {% endif %}
+{% endif %}
+
+{% endblock %}

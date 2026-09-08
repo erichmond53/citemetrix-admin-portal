@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Measure — Traffic{% endblock %}
+{% block page_title %}Measure{% endblock %}
+{% block topbar_actions %}
+  <button type="button" class="btn btn-primary" id="tf-refresh-btn" onclick="tfRefresh()">&#8635; Refresh</button>
+  <span id="tf-refresh-status" style="margin-left:10px;font-size:13px;color:var(--gray-500);"></span>
+  <script>
+    // step1brief.md SS17 Gates: jobs/traffic.py used to run synchronously in the
+    // request (up to 150s, blocking a gunicorn worker). Now fire-and-forget on
+    // the server side; this polls until traffic-latest.json's own `generated`
+    // timestamp moves past what it was when the click happened, then reloads.
+    var TF_STARTED_GENERATED = {{ (data.generated if data else '')|tojson }};
+    function tfRefresh() {
+      var btn = document.getElementById('tf-refresh-btn');
+      var status = document.getElementById('tf-refresh-status');
+      btn.disabled = true;
+      status.textContent = 'Refreshing… (up to ~2 min)';
+      fetch('/marketing/traffic/refresh', {method: 'POST'})
+        .then(function () { tfPoll(0); })
+        .catch(function () { status.textContent = 'Failed to start refresh.'; btn.disabled = false; });
+    }
+    function tfPoll(elapsedSec) {
+      var status = document.getElementById('tf-refresh-status');
+      if (elapsedSec >= 170) { status.textContent = 'Still running — reload the page in a bit to check.'; document.getElementById('tf-refresh-btn').disabled = false; return; }
+      fetch('/marketing/traffic/refresh-status').then(function (r) { return r.json(); }).then(function (j) {
+        if (j.generated && j.generated !== TF_STARTED_GENERATED) { status.textContent = 'Updated — reloading…'; location.reload(); return; }
+        setTimeout(function () { tfPoll(elapsedSec + 5); }, 5000);
+      }).catch(function () { setTimeout(function () { tfPoll(elapsedSec + 5); }, 5000); });
+    }
+  </script>
+{% endblock %}
+{% block content %}
+{% include "marketing/_measure_tabs.html" %}
+{% import 'marketing/_charts.html' as charts %}
+
+{% if not data %}
+  <div class="card"><p style="color:var(--gray-500);">No traffic snapshot yet. Click <strong>Refresh</strong> to pull from GA4 + Search Console.</p></div>
+{% else %}
+
+<style>
+  .traffic-tabs { display:flex; gap:4px; border-bottom:2px solid var(--gray-200); margin-bottom:20px; }
+  .traffic-tab { background:none; border:none; padding:11px 20px; font-size:14px; font-weight:600; color:var(--gray-500); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; }
+  .traffic-tab:hover { color:var(--gray-800); }
+  .traffic-tab.active { color:var(--primary); border-bottom-color:var(--primary); }
+  .traffic-tab:disabled { color:var(--gray-300); cursor:not-allowed; }
+</style>
+
+<div style="display:flex;align-items:flex-end;justify-content:space-between;">
+  <div class="traffic-tabs">
+    <button type="button" class="traffic-tab active" data-tab="ga4">Google Analytics</button>
+    <button type="button" class="traffic-tab" data-tab="gsc">Google Search Console</button>
+    <button type="button" class="traffic-tab" disabled title="Coming soon">Bing Webmaster Tools</button>
+  </div>
+  <p style="color:var(--gray-400);font-size:12px;margin:0 0 12px;">
+    Updated {{ data.generated|replace('T',' ') }}{% if data.notes %} <span style="color:var(--danger);">&middot; {{ data.notes|join('; ') }}</span>{% endif %}
+  </p>
+</div>
+
+{# ══════════════ GOOGLE ANALYTICS ══════════════ #}
+<div class="traffic-panel" data-tab="ga4">
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Google Analytics 4 &mdash; Sessions</div>
+    <div class="win-toggle" style="display:inline-flex;gap:6px;">
+      <button type="button" class="btn btn-primary win-btn" data-win="d30" style="padding:6px 14px;">Last 30 Days</button>
+      <button type="button" class="btn btn-secondary win-btn" data-win="d7" style="padding:6px 14px;">Last 7 Days</button>
+    </div>
+  </div>
+
+  {% for wk, wlabel in [('d30','Last 30 Days'), ('d7','Last 7 Days')] %}
+  {% set w = data.ga4.get(wk) %}
+  <div class="win-panel" data-win="{{ wk }}" {% if wk != 'd30' %}style="display:none;"{% endif %}>
+    {% if w %}
+    {% if wk == 'd30' and sessions_daily %}
+    <div class="card" style="margin-bottom:20px;">
+      <div style="font-size:13px;color:var(--gray-600);margin-bottom:8px;font-weight:600;">Sessions by day (last 30 days) &mdash; are we getting more visitors over time?</div>
+      {{ charts.linechart([{'name':'Daily sessions','color':'var(--primary)','data':sessions_daily}]) }}
+    </div>
+    {% endif %}
+    <div class="grid grid-4" style="margin-bottom:24px;">
+      <div class="stat-card"><div class="stat-label">Sessions</div><div class="stat-value">{{ '{:,}'.format(w.totals.sessions) }}</div></div>
+      <div class="stat-card"><div class="stat-label">Engaged Sessions</div><div class="stat-value">{{ '{:,}'.format(w.totals.engaged) }}</div></div>
+      <div class="stat-card"><div class="stat-label">Engagement Rate</div><div class="stat-value">{{ w.totals.engagement_rate }}%</div></div>
+      <div class="stat-card"><div class="stat-label">Avg. Duration</div><div class="stat-value">{{ w.totals.avg_duration }}s</div></div>
+    </div>
+
+    {% if w.device_email %}
+    {% set _tot = (w.device_email.values()|map(attribute='sessions')|sum) %}
+    {% set _mob = (w.device_email.get('mobile', {}).get('sessions', 0)) %}
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-title" style="margin-bottom:6px;">Device split &mdash; email traffic</div>
+      {% if _tot and (100*_mob/_tot) < 15 %}
+      <div style="background:#eff6ff;border:1px solid #c3d9f7;color:#1c437f;border-radius:7px;padding:10px 14px;margin:8px 0 14px;font-size:13px;">
+        Mobile is only {{ (100*_mob/_tot)|round(1) }}% of email sessions, with near-zero duration &mdash; but /check loads fine on modern phones, so this is most likely a <strong>measurement gap, not a broken page</strong>: mobile email links open in the email app&#39;s in-app browser (Gmail/Outlook/Apple Mail), where GA4 tracking is unreliable. Treat mobile figures here as under-counted &mdash; lean on desktop for the real engagement signal.
+      </div>
+      {% endif %}
+      <div style="overflow-x:auto;">
+      <table class="table">
+        <thead><tr><th>Device</th><th style="text-align:right;">Sessions</th><th style="text-align:right;">Share</th><th style="text-align:right;">Avg dur.</th><th style="text-align:right;">Engagement</th><th style="text-align:right;">Scans</th><th style="text-align:right;">Leads</th></tr></thead>
+        <tbody>
+          {% for dc, m in w.device_email.items()|sort(attribute='1.sessions', reverse=true) %}
+          <tr>
+            <td style="text-transform:capitalize;font-weight:500;">{{ dc }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(m.sessions) }}</td>
+            <td style="text-align:right;">{{ (100*m.sessions/_tot)|round(1) if _tot else 0 }}%</td>
+            <td style="text-align:right;">{{ m.avg_duration }}s</td>
+            <td style="text-align:right;">{{ m.engagement_rate }}%</td>
+            <td style="text-align:right;">{{ m.scans }}</td>
+            <td style="text-align:right;font-weight:600;">{{ m.leads }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="grid grid-2">
+      <div>
+        <div class="card-title" style="margin-bottom:10px;">Top Source / Medium</div>
+        <table class="table"><thead><tr><th>Source / Medium</th><th style="text-align:right;">Sessions</th></tr></thead><tbody>
+          {% for r in w.source_medium %}<tr><td>{{ r.key }}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.sessions) }}</td></tr>{% endfor %}
+          {% if not w.source_medium %}<tr><td colspan="2" style="color:var(--gray-400);">No data</td></tr>{% endif %}
+        </tbody></table>
+      </div>
+      <div>
+        <div class="card-title" style="margin-bottom:10px;">Top Campaigns (utm_campaign)</div>
+        <table class="table"><thead><tr><th>Campaign</th><th style="text-align:right;">Sessions</th></tr></thead><tbody>
+          {% for r in w.campaigns %}<tr><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ r.campaign }}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.sessions) }}</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+    </div>
+
+    <div class="grid grid-2" style="margin-top:24px;">
+      <div>
+        <div class="card-title" style="margin-bottom:10px;">Top Landing Pages</div>
+        <table class="table"><thead><tr><th>Page</th><th style="text-align:right;">Sessions</th></tr></thead><tbody>
+          {% for r in w.landing_pages %}<tr><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ r.page }}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.sessions) }}</td></tr>{% endfor %}
+        </tbody></table>
+      </div>
+      <div>
+        <div class="card-title" style="margin-bottom:10px;">Device Split</div>
+        {% set dtot = (w.devices.values()|sum) or 1 %}
+        <table class="table"><thead><tr><th>Device</th><th style="text-align:right;">Sessions</th><th style="text-align:right;">Share</th></tr></thead><tbody>
+          {% for dev, n in w.devices.items()|sort(attribute='1', reverse=True) %}
+          <tr><td style="text-transform:capitalize;">{{ dev }}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(n) }}</td><td style="text-align:right;">{{ (100*n/dtot)|round(1) }}%</td></tr>
+          {% endfor %}
+        </tbody></table>
+      </div>
+    </div>
+    {% else %}<p style="color:var(--gray-400);">No GA4 data for this window.</p>{% endif %}
+  </div>
+  {% endfor %}
+</div>
+</div>
+
+{# ══════════════ GOOGLE SEARCH CONSOLE ══════════════ #}
+<div class="traffic-panel" data-tab="gsc" style="display:none;">
+{% set g = data.gsc %}
+<div class="card">
+  <div class="card-header">
+    <div class="card-title">Search Console &mdash; last 28 days</div>
+    {% if g and g.window %}<span style="font-size:12px;color:var(--gray-400);">{{ g.window.start }} &rarr; {{ g.window.end }}</span>{% endif %}
+  </div>
+  {% if g and g.branded %}
+  <div class="grid grid-4" style="margin-bottom:24px;">
+    <div class="stat-card"><div class="stat-label">Branded Impressions</div><div class="stat-value">{{ '{:,}'.format(g.branded.impressions) }}</div></div>
+    <div class="stat-card"><div class="stat-label">Branded Clicks</div><div class="stat-value">{{ '{:,}'.format(g.branded.clicks) }}</div></div>
+    <div class="stat-card"><div class="stat-label">Branded Avg. Position</div><div class="stat-value">{{ g.branded.position }}</div></div>
+    <div class="stat-card"><div class="stat-label">/check/ Impressions</div><div class="stat-value">{{ '{:,}'.format(g.check.impressions) }}</div></div>
+  </div>
+  {% if g.branded_trend and g.branded_trend|length > 1 %}
+  <div style="margin-bottom:24px;">
+    <div class="card-title" style="margin-bottom:10px;">Branded Search &mdash; weekly trend</div>
+    <table class="table"><thead><tr><th>Week ending</th><th style="text-align:right;">Impressions</th><th style="text-align:right;">Clicks</th></tr></thead><tbody>
+      {% for t in g.branded_trend %}<tr><td>{{ t.week_end }}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(t.impressions) }}</td><td style="text-align:right;">{{ t.clicks }}</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+  {% endif %}
+  <div class="card-title" style="margin-bottom:10px;">Top Non-Branded Queries</div>
+  <table class="table"><thead><tr><th>Query</th><th style="text-align:right;">Impr.</th><th style="text-align:right;">Clicks</th><th style="text-align:right;">Position</th></tr></thead><tbody>
+    {% for r in g.nonbranded %}<tr><td>{{ r.query }}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.impressions) }}</td><td style="text-align:right;">{{ r.clicks }}</td><td style="text-align:right;">{{ r.position }}</td></tr>{% endfor %}
+    {% if not g.nonbranded %}<tr><td colspan="4" style="color:var(--gray-400);">No non-branded queries in window</td></tr>{% endif %}
+  </tbody></table>
+  {% else %}
+  <p style="color:var(--gray-400);">No Search Console data available.</p>
+  {% endif %}
+</div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Top-level source tabs (Google Analytics / Search Console / Bing…)
+  document.querySelectorAll('.traffic-tab:not(:disabled)').forEach(function (t) {
+    t.addEventListener('click', function () {
+      var tab = this.getAttribute('data-tab');
+      document.querySelectorAll('.traffic-tab').forEach(function (x) { x.classList.toggle('active', x === t); });
+      document.querySelectorAll('.traffic-panel').forEach(function (p) {
+        p.style.display = (p.getAttribute('data-tab') === tab) ? 'block' : 'none';
+      });
+    });
+  });
+  // GA4 window toggle (7d / 30d)
+  document.querySelectorAll('.win-btn').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var win = this.getAttribute('data-win');
+      document.querySelectorAll('.win-btn').forEach(function (x) { x.classList.toggle('btn-primary', x === b); x.classList.toggle('btn-secondary', x !== b); });
+      document.querySelectorAll('.win-panel').forEach(function (p) {
+        p.style.display = (p.getAttribute('data-win') === win) ? 'block' : 'none';
+      });
+    });
+  });
+</script>
+{% endblock %}

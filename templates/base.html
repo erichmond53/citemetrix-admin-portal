@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Admin Portal{% endblock %} | CiteMetrix</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --primary: #4f46e5; --primary-dark: #4338ca; --success: #10b981; --warning: #f59e0b; --danger: #ef4444; --gray-50: #f9fafb; --gray-100: #f3f4f6; --gray-200: #e5e7eb; --gray-300: #d1d5db; --gray-400: #9ca3af; --gray-500: #6b7280; --gray-600: #4b5563; --gray-700: #374151; --gray-800: #1f2937; --gray-900: #111827; --sidebar-width: 240px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--gray-100); color: var(--gray-800); min-height: 100vh; }
+        .sidebar { position: fixed; left: 0; top: 0; width: var(--sidebar-width); height: 100vh; background: var(--gray-900); color: white; overflow-y: auto; z-index: 100; padding-bottom: 80px; }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid var(--gray-700); }
+        .sidebar-logo { font-size: 20px; font-weight: 700; color: white; text-decoration: none; }
+        .sidebar-logo span { color: var(--primary); }
+        .sidebar-nav { padding: 12px 12px; }
+        .nav-section { margin-bottom: 4px; }
+        .nav-link { display: flex; align-items: center; gap: 12px; padding: 9px 12px; color: var(--gray-300); text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; }
+        .nav-link:hover { background: var(--gray-800); color: white; }
+        .nav-link.active { background: var(--primary); color: white; }
+        .nav-link svg { width: 20px; height: 20px; flex-shrink: 0; }
+        /* Collapsible section groups */
+        .nav-section-header { display: flex; align-items: center; gap: 10px; padding: 9px 12px; color: var(--gray-400); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; cursor: pointer; user-select: none; border-radius: 6px; }
+        .nav-section-header:hover { color: var(--gray-100); background: var(--gray-800); }
+        .nav-section-icon { width: 18px; text-align: center; font-size: 14px; }
+        .nav-chevron { margin-left: auto; font-size: 10px; transition: transform .2s; }
+        .nav-section.open .nav-chevron { transform: rotate(180deg); }
+        .nav-section-items { display: none; padding: 2px 0 6px; }
+        .nav-section.open .nav-section-items { display: block; }
+        .nav-section-items .nav-link { padding-left: 42px; font-size: 13px; }
+        .sidebar-user { position: fixed; bottom: 0; left: 0; width: var(--sidebar-width); padding: 16px 20px; border-top: 1px solid var(--gray-700); background: var(--gray-900); }
+        .user-info { display: flex; align-items: center; gap: 12px; }
+        .user-avatar { width: 36px; height: 36px; background: var(--primary); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; }
+        .user-name { font-size: 14px; font-weight: 500; }
+        .user-role { font-size: 12px; color: var(--gray-400); text-transform: capitalize; }
+        .main { margin-left: var(--sidebar-width); min-height: 100vh; }
+        .topbar { background: white; border-bottom: 1px solid var(--gray-200); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+        .page-title { font-size: 24px; font-weight: 600; }
+        .content { padding: 32px; }
+        .card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 24px; margin-bottom: 24px; }
+        .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .card-title { font-size: 16px; font-weight: 600; }
+        .grid { display: grid; gap: 24px; }
+        .grid-2 { grid-template-columns: repeat(2, 1fr); }
+        .grid-3 { grid-template-columns: repeat(3, 1fr); }
+        .grid-4 { grid-template-columns: repeat(4, 1fr); }
+        .stat-card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .stat-label { font-size: 13px; color: var(--gray-500); margin-bottom: 8px; }
+        .stat-value { font-size: 28px; font-weight: 700; }
+        .badge { display: inline-flex; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+        .badge-success { background: #d1fae5; color: #065f46; }
+        .badge-warning { background: #fef3c7; color: #92400e; }
+        .badge-danger { background: #fee2e2; color: #991b1b; }
+        .badge-info { background: #dbeafe; color: #1e40af; }
+        .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; text-decoration: none; border: none; cursor: pointer; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-secondary { background: var(--gray-100); color: var(--gray-700); }
+        .table { width: 100%; border-collapse: collapse; }
+        .table th { text-align: left; padding: 12px 16px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--gray-500); border-bottom: 2px solid var(--gray-200); }
+        .table td { padding: 12px 16px; border-bottom: 1px solid var(--gray-100); font-size: 14px; }
+        .alert { padding: 16px 20px; border-radius: 8px; margin-bottom: 16px; display: flex; align-items: center; gap: 12px; }
+        .alert-warning { background: #fef3c7; color: #92400e; }
+        .alert-error { background: #fee2e2; color: #991b1b; }
+        .alert-danger { background: #fee2e2; color: #991b1b; }
+
+        /* Lead detail panel (IA spec §6) -- global slide-over, opened from any lead
+           anywhere it appears (Pipeline card, Leads row, ...). Lives in base.html rather
+           than a page template so it's available site-wide without duplication. */
+        .ldp-backdrop { display:none; position:fixed; inset:0; background:rgba(17,24,39,.35); z-index:500; }
+        .ldp-backdrop.open { display:block; }
+        .ldp-panel { position:fixed; top:0; right:-460px; width:460px; max-width:92vw; height:100vh; background:#fff; z-index:501; box-shadow:-8px 0 24px rgba(0,0,0,.15); transition:right .2s ease; display:flex; flex-direction:column; }
+        .ldp-panel.open { right:0; }
+        .ldp-head { padding:20px 24px; border-bottom:1px solid var(--gray-200); display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+        .ldp-head h2 { font-size:18px; font-weight:700; color:var(--gray-800); }
+        .ldp-head .ldp-sub { font-size:13px; color:var(--gray-500); margin-top:2px; }
+        .ldp-close { background:none; border:none; font-size:20px; line-height:1; color:var(--gray-400); cursor:pointer; padding:4px; }
+        .ldp-close:hover { color:var(--gray-700); }
+        .ldp-body { flex:1; overflow-y:auto; padding:20px 24px; }
+        .ldp-section { margin-bottom:22px; }
+        .ldp-section h3 { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--gray-400); margin-bottom:10px; }
+        .ldp-row { display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:5px 0; color:var(--gray-700); }
+        .ldp-row .k { color:var(--gray-500); }
+        .ldp-empty { color:var(--gray-400); font-size:13px; }
+        .ldp-platform { display:flex; justify-content:space-between; align-items:center; padding:6px 0; font-size:13px; border-bottom:1px solid var(--gray-100); }
+        .ldp-timeline-item { padding:8px 0; border-bottom:1px solid var(--gray-100); font-size:13px; }
+        .ldp-timeline-item .t { color:var(--gray-400); font-size:12px; }
+        .ldp-actions { padding:16px 24px; border-top:1px solid var(--gray-200); display:flex; flex-wrap:wrap; gap:8px; }
+        .ldp-actions select, .ldp-actions input[type=text] { padding:8px 10px; border:1px solid var(--gray-200); border-radius:6px; font-size:13px; }
+        .ldp-status { font-size:12px; margin-top:6px; }
+        .ldp-status.error { color:var(--danger); }
+        .ldp-status.success { color:var(--success); }
+        .ldp-note-form { display:flex; gap:6px; width:100%; }
+        .ldp-note-form input { flex:1; }
+    </style>
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-header"><a href="/" class="sidebar-logo"><span>Cite</span>Metrix</a></div>
+        <nav class="sidebar-nav">
+            {% set ep = request.endpoint or '' %}
+            {% set role = (current_user.role if current_user.is_authenticated else '') %}
+
+            {# Dashboard — always visible, not collapsible #}
+            <div class="nav-section" style="margin-bottom:10px;">
+                <a href="/" class="nav-link {% if ep == 'dashboard' %}active{% endif %}"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>Dashboard</a>
+            </div>
+
+            {# Marketing -- step1brief.md SS17: 9 pages regrouped under 4 items
+               (Leads / Sequences / Sources / Measure), approved 2026-09-03.
+               Step 1 ("shell first"): grouping only. No route changed, no page
+               content touched -- every link below still points at its original
+               endpoint. Steps 2-5 (merging Drip Leads into Leads, tabbing
+               Measure, turning Campaign Builder into the source_refs editor,
+               folding Nurture into Sequences post-drain) come later. #}
+            {% if role in ['admin', 'marketing'] %}
+            {# step1brief.md SS17 step 2: Drip Leads merged into Leads (a path
+               filter now, not a separate page) -- single direct link, matching
+               Dashboard's pattern, rather than a 1-item dropdown. #}
+            <div class="nav-section" style="margin-bottom:4px;">
+                <a href="/marketing/leads" class="nav-link {% if ep in ['marketing_leads', 'marketing_leads_toggle', 'marketing_drip_leads'] %}active{% endif %}"><span class="nav-section-icon">&#128100;</span><span>Leads</span></a>
+            </div>
+
+            {% set nav_sequences = ep in ['marketing_drip_campaigns', 'marketing_drip_campaign_detail'] %}
+            <div class="nav-section {% if nav_sequences %}open{% endif %}">
+                <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#9993;</span><span>Sequences</span><span class="nav-chevron">&#9662;</span></a>
+                <div class="nav-section-items">
+                    <a href="/marketing/drip-campaigns" class="nav-link {% if ep in ['marketing_drip_campaigns', 'marketing_drip_campaign_detail'] %}active{% endif %}">Drip Campaigns</a>
+                </div>
+            </div>
+
+            {% set nav_sources = ep in ['campaign_builder', 'campaign_builder_redirect', 'campaign_builder_save', 'campaign_builder_results'] %}
+            <div class="nav-section {% if nav_sources %}open{% endif %}">
+                <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#128279;</span><span>Sources</span><span class="nav-chevron">&#9662;</span></a>
+                <div class="nav-section-items">
+                    <a href="/marketing/sources" class="nav-link {% if ep in ['campaign_builder', 'campaign_builder_redirect', 'campaign_builder_save', 'campaign_builder_results'] %}active{% endif %}">Campaign Builder</a>
+                </div>
+            </div>
+
+            {# step1brief.md SS17 step 3: Campaigns/Traffic/Deliverability/Survey are
+               now one tabbed page (see _measure_tabs.html) -- one sidebar entry,
+               not four, matching the in-page tab bar. Nurture stays separate until
+               it folds into Sequences post-drain (step 5). #}
+            {% set nav_measure = ep in ['campaign_effectiveness', 'marketing', 'campaign_effectiveness_redirect', 'marketing_traffic', 'marketing_traffic_redirect', 'marketing_traffic_refresh', 'gsc_weekly', 'marketing_deliverability', 'marketing_deliverability_redirect', 'marketing_deliverability_refresh', 'marketing_survey', 'marketing_survey_redirect', 'marketing_nurture'] %}
+            <div class="nav-section {% if nav_measure %}open{% endif %}">
+                <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#128202;</span><span>Measure</span><span class="nav-chevron">&#9662;</span></a>
+                <div class="nav-section-items">
+                    <a href="/marketing/measure/effectiveness" class="nav-link {% if ep in ['campaign_effectiveness', 'marketing', 'campaign_effectiveness_redirect', 'marketing_traffic', 'marketing_traffic_redirect', 'marketing_traffic_refresh', 'gsc_weekly', 'marketing_deliverability', 'marketing_deliverability_redirect', 'marketing_deliverability_refresh', 'marketing_survey', 'marketing_survey_redirect'] %}active{% endif %}">Measure</a>
+                    <a href="/marketing/nurture" class="nav-link {% if ep == 'marketing_nurture' %}active{% endif %}">Nurture</a>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Sales #}
+            {% if role in ['admin', 'sales'] %}
+            {% set sl = ep in ['sales_pipeline', 'revenue', 'sales_demo_requests', 'demo_page', 'beta'] %}
+            <div class="nav-section {% if sl %}open{% endif %}">
+                <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#128176;</span><span>Sales</span><span class="nav-chevron">&#9662;</span></a>
+                <div class="nav-section-items">
+                    <a href="/sales/pipeline" class="nav-link {% if ep == 'sales_pipeline' %}active{% endif %}">Pipeline</a>
+                    <a href="/revenue" class="nav-link {% if ep == 'revenue' %}active{% endif %}">Revenue</a>
+                    <a href="/sales/demo-requests" class="nav-link {% if ep == 'sales_demo_requests' %}active{% endif %}">Booked Demos</a>
+                    <a href="/demo" class="nav-link {% if ep == 'demo_page' %}active{% endif %}">Demo Simulator</a>
+                    <a href="/beta" class="nav-link {% if ep == 'beta' %}active{% endif %}">Beta</a>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Customers #}
+            {% if role in ['admin', 'support'] %}
+            {% set cu = ep in ['customers', 'customer_detail', 'cs_alerts', 'customers_inbox', 'customers_domain_transfer', 'customers_domain_transfer_execute'] %}
+            <div class="nav-section {% if cu %}open{% endif %}">
+                <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#128101;</span><span>Customers</span><span class="nav-chevron">&#9662;</span></a>
+                <div class="nav-section-items">
+                    <a href="/customers" class="nav-link {% if ep in ['customers', 'customer_detail'] %}active{% endif %}">Customer List</a>
+                    <a href="/cs-alerts" class="nav-link {% if ep == 'cs_alerts' %}active{% endif %}">CS Alerts</a>
+                    <a href="/customers/inbox" class="nav-link {% if ep == 'customers_inbox' %}active{% endif %}">Inbox</a>
+                    {% if role == 'admin' %}<a href="/customers/domain-transfer" class="nav-link {% if ep in ['customers_domain_transfer', 'customers_domain_transfer_execute'] %}active{% endif %}">Domain Transfer</a>{% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            {# Operations #}
+            {% if role in ['admin', 'operations'] %}
+            {% set op = ep in ['operations', 'audit_log', 'operations_api_status'] %}
+            <div class="nav-section {% if op %}open{% endif %}">
+                <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#9881;&#65039;</span><span>Operations</span><span class="nav-chevron">&#9662;</span></a>
+                <div class="nav-section-items">
+                    <a href="/operations" class="nav-link {% if ep == 'operations' %}active{% endif %}">Product Jobs</a>
+                    <a href="/operations/api-status" class="nav-link {% if ep == 'operations_api_status' %}active{% endif %}">AI Platform APIs</a>
+                    {% if role == 'admin' %}<a href="/audit" class="nav-link {% if ep == 'audit_log' %}active{% endif %}">Customer Activity Log</a>{% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            {# Company #}
+            {% if role == 'admin' %}
+            {% set co = ep in ['competition', 'investors', 'outreach_pipeline', 'investor_requests', 'investor_request_detail', 'roadmap'] %}
+            <div class="nav-section {% if co %}open{% endif %}">
+                <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#127970;</span><span>Company</span><span class="nav-chevron">&#9662;</span></a>
+                <div class="nav-section-items">
+                    <a href="/investors" class="nav-link {% if ep == 'investors' %}active{% endif %}">Investors</a>
+                    <a href="/outreach" class="nav-link {% if ep == 'outreach_pipeline' %}active{% endif %}">Investor Outreach</a>
+                    <a href="/investor-requests" class="nav-link {% if ep in ['investor_requests', 'investor_request_detail'] %}active{% endif %}">Investor Requests</a>
+                    <a href="/roadmap" class="nav-link {% if ep == 'roadmap' %}active{% endif %}">Roadmap</a>
+                    <a href="/competition" class="nav-link {% if ep == 'competition' %}active{% endif %}">Competition</a>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Admin #}
+            {% if role == 'admin' %}
+            {% set ad = ep in ['team', 'team_invite', 'team_change_role', 'team_deactivate', 'team_reactivate', 'team_revoke_invitation', 'settings', 'tiers', 'tier_detail', 'tier_new'] %}
+            <div class="nav-section {% if ad %}open{% endif %}">
+                <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#128274;</span><span>Admin</span><span class="nav-chevron">&#9662;</span></a>
+                <div class="nav-section-items">
+                    <a href="/team" class="nav-link {% if ep in ['team', 'team_invite', 'team_change_role', 'team_deactivate', 'team_reactivate', 'team_revoke_invitation'] %}active{% endif %}">Staff &amp; Access</a>
+                    <a href="/tiers" class="nav-link {% if ep in ['tiers', 'tier_detail', 'tier_new'] %}active{% endif %}">Tiers</a>
+                    <a href="/settings" class="nav-link {% if ep == 'settings' %}active{% endif %}">Settings</a>
+                </div>
+            </div>
+            {% endif %}
+        </nav>
+
+        {% if current_user.is_authenticated %}
+        <div class="sidebar-user">
+            <div class="user-info">
+                <div class="user-avatar">{{ current_user.name[0] | upper }}</div>
+                <div><div class="user-name">{{ current_user.name }}</div><div class="user-role">{{ current_user.role }}</div></div>
+                <a href="/logout" style="color: var(--gray-400); margin-left: auto;"><svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg></a>
+            </div>
+        </div>
+        {% endif %}
+    </aside>
+
+    <main class="main">
+        <header class="topbar"><h1 class="page-title">{% block page_title %}Dashboard{% endblock %}</h1><div>{% block topbar_actions %}{% endblock %}</div></header>
+        <div class="content">{% block content %}{% endblock %}</div>
+    </main>
+
+    {% block scripts %}{% endblock %}
+
+    {# Lead detail panel (IA spec §6) -- global slide-over, opened via openLeadDetail(id)
+       from anywhere a lead appears (Pipeline card, Leads row, and later Dashboard/Inbox).
+       Lives here, once, rather than per-page, so every future lead-showing page gets it
+       for free by just calling openLeadDetail(). #}
+    <div id="ldp-backdrop" class="ldp-backdrop" onclick="closeLeadDetail()"></div>
+    <aside id="ldp-panel" class="ldp-panel">
+        <div class="ldp-head">
+            <div>
+                <h2 id="ldp-name">Lead</h2>
+                <div class="ldp-sub" id="ldp-sub"></div>
+            </div>
+            <button type="button" class="ldp-close" onclick="closeLeadDetail()">&times;</button>
+        </div>
+        <div class="ldp-body" id="ldp-body"></div>
+        <div class="ldp-actions" id="ldp-actions"></div>
+    </aside>
+    <script>
+        let ldpCurrentId = null;
+        let ldpCampaignsCache = null;
+
+        function ldpEsc(s) {
+            const d = document.createElement('div');
+            d.textContent = (s === null || s === undefined) ? '' : String(s);
+            return d.innerHTML;
+        }
+        function ldpFmtDate(s) {
+            if (!s) return '';
+            return String(s).replace('T', ' ').slice(0, 16);
+        }
+
+        async function openLeadDetail(id) {
+            ldpCurrentId = id;
+            document.getElementById('ldp-backdrop').classList.add('open');
+            document.getElementById('ldp-panel').classList.add('open');
+            document.getElementById('ldp-name').textContent = 'Loading…';
+            document.getElementById('ldp-sub').textContent = '';
+            document.getElementById('ldp-body').innerHTML = '';
+            document.getElementById('ldp-actions').innerHTML = '';
+            await ldpRefresh();
+        }
+        function closeLeadDetail() {
+            document.getElementById('ldp-backdrop').classList.remove('open');
+            document.getElementById('ldp-panel').classList.remove('open');
+            ldpCurrentId = null;
+        }
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeLeadDetail(); });
+
+        async function ldpRefresh() {
+            if (!ldpCurrentId) return;
+            let d;
+            try {
+                const r = await fetch('/api/leads/' + ldpCurrentId + '/detail');
+                if (!r.ok) { document.getElementById('ldp-body').innerHTML = '<p class="ldp-empty">Could not load this lead.</p>'; return; }
+                d = await r.json();
+            } catch (e) {
+                document.getElementById('ldp-body').innerHTML = '<p class="ldp-empty">Could not load this lead.</p>';
+                return;
+            }
+            ldpRender(d);
+        }
+
+        function ldpRender(d) {
+            const l = d.lead;
+            const name = ((l.first_name || '') + ' ' + (l.last_name || '')).trim() || l.company || (l.email || ('Lead #' + l.id));
+            document.getElementById('ldp-name').textContent = name;
+            document.getElementById('ldp-sub').textContent = l.email || 'No email on file';
+
+            let identity = '';
+            if (l.company) identity += `<div class="ldp-row"><span class="k">Company</span><span>${ldpEsc(l.company)}</span></div>`;
+            if (l.title) identity += `<div class="ldp-row"><span class="k">Title</span><span>${ldpEsc(l.title)}</span></div>`;
+            if (l.phone) identity += `<div class="ldp-row"><span class="k">Phone</span><span>${ldpEsc(l.phone)}</span></div>`;
+            if (l.linkedin_url) identity += `<div class="ldp-row"><span class="k">LinkedIn</span><a href="${ldpEsc(l.linkedin_url)}" target="_blank" rel="noopener">Profile</a></div>`;
+            if (!identity) identity = '<p class="ldp-empty">No additional identity fields on file.</p>';
+            let touches = (d.touches || []).map(t => {
+                const label = t.label || t.source || 'no label';
+                return `<div class="ldp-row"><span class="k" style="text-transform:capitalize;">${ldpEsc(t.path)}</span><span>${ldpEsc(label)} &middot; ${ldpFmtDate(t.occurred_at)}</span></div>`;
+            }).join('');
+            if (!touches) touches = '<p class="ldp-empty">No recorded source touches.</p>';
+
+            let attribution = '';
+            if (l.source_override) attribution += `<div class="ldp-row"><span class="k">Source (manual)</span><span>${ldpEsc(l.source_override)}</span></div>`;
+            if (l.ai_referral_platform) attribution += `<div class="ldp-row"><span class="k">AI referral</span><span>${ldpEsc(l.ai_referral_platform)}</span></div>`;
+            if (d.free_check) {
+                const fc = d.free_check;
+                attribution += `<div class="ldp-row"><span class="k">Domain checked</span><span>${ldpEsc(fc.domain || '—')}</span></div>`;
+                attribution += `<div class="ldp-row"><span class="k">ModelScore</span><span>${(fc.model_score === null || fc.model_score === undefined) ? '—' : fc.model_score}</span></div>`;
+                const camp = [fc.utm_source, fc.utm_campaign].filter(Boolean).join(' / ');
+                if (camp) attribution += `<div class="ldp-row"><span class="k">Campaign</span><span>${ldpEsc(camp)}</span></div>`;
+                if (fc.platforms && fc.platforms.length) {
+                    attribution += '<div style="margin-top:8px;">' + fc.platforms.map(p =>
+                        `<div class="ldp-platform"><span>${ldpEsc(p.platform)}</span><span style="font-weight:600;color:${p.mentioned ? 'var(--success)' : 'var(--danger)'};">${p.mentioned ? 'Mentioned' : 'Not mentioned'}</span></div>`
+                    ).join('') + '</div>';
+                }
+            }
+            if (!attribution) attribution = '<p class="ldp-empty">No attribution data on file.</p>';
+
+            const stageSince = l.stage_entered_at ? ` <span style="color:var(--gray-400);">(since ${ldpFmtDate(l.stage_entered_at)})</span>` : '';
+            let state = `<div class="ldp-row"><span class="k">Stage</span><span style="text-transform:capitalize;">${ldpEsc(l.stage)}${stageSince}</span></div>`;
+            if (l.excluded) state += `<div class="ldp-row"><span class="k">Excluded</span><span>Yes</span></div>`;
+            if (l.suppressed_at) state += `<div class="ldp-row"><span class="k">Suppressed</span><span>${ldpEsc(l.suppression_reason || 'yes')} &middot; ${ldpFmtDate(l.suppressed_at)}</span></div>`;
+            (d.enrollments || []).forEach(e => {
+                state += `<div class="ldp-row"><span class="k">${ldpEsc(e.campaign_name)}</span><span style="text-transform:capitalize;">${ldpEsc(e.status)} (step ${e.current_step})</span></div>`;
+            });
+            if (l.dup_status === 'possible_dup') {
+                const sibs = (d.dup_siblings || []).map(s => s.email || ((s.first_name || '') + ' ' + (s.last_name || '')).trim() || ('#' + s.id)).map(ldpEsc).join(', ');
+                state += `<div class="ldp-row"><span class="k">Possible duplicate</span><span>${sibs || 'shares an email with another lead'}</span></div>`;
+            }
+
+            let timeline = (d.timeline || []).map(t =>
+                `<div class="ldp-timeline-item"><div>${ldpEsc(t.text)}</div><div class="t">${ldpFmtDate(t.occurred_at)}</div></div>`
+            ).join('');
+            if (!timeline) timeline = '<p class="ldp-empty">No recorded activity yet.</p>';
+
+            document.getElementById('ldp-body').innerHTML =
+                '<div class="ldp-section"><h3>Identity</h3>' + identity + touches + '</div>' +
+                '<div class="ldp-section"><h3>Attribution</h3>' + attribution + '</div>' +
+                '<div class="ldp-section"><h3>State</h3>' + state + '</div>' +
+                '<div class="ldp-section"><h3>Timeline</h3>' + timeline + '</div>';
+
+            const stages = ['new', 'contacted', 'engaged', 'qualified', 'won', 'lost'];
+            const stageOptions = stages.map(s => `<option value="${s}" ${s === l.stage ? 'selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('');
+            document.getElementById('ldp-actions').innerHTML =
+                '<select id="ldp-stage-select" onchange="ldpSetStage(this.value)">' + stageOptions + '</select>' +
+                '<button type="button" class="btn btn-secondary" onclick="ldpToggleExclude()">' + (l.excluded ? 'Restore' : 'Exclude') + '</button>' +
+                '<select id="ldp-enroll-select"><option value="">Enroll in…</option></select>' +
+                '<button type="button" class="btn btn-secondary" onclick="ldpEnroll()">Enroll</button>' +
+                '<form class="ldp-note-form" onsubmit="ldpAddNote(event)"><input type="text" id="ldp-note-input" placeholder="Add a note…"><button type="submit" class="btn btn-primary">Add</button></form>' +
+                '<div id="ldp-action-status" class="ldp-status"></div>';
+            ldpLoadCampaigns();
+        }
+
+        async function ldpLoadCampaigns() {
+            if (!ldpCampaignsCache) {
+                try {
+                    const r = await fetch('/api/drip/campaigns/list');
+                    const j = await r.json();
+                    ldpCampaignsCache = j.campaigns || [];
+                } catch (e) { ldpCampaignsCache = []; }
+            }
+            const sel = document.getElementById('ldp-enroll-select');
+            if (!sel) return;
+            sel.innerHTML = '<option value="">Enroll in…</option>' + ldpCampaignsCache.map(c =>
+                `<option value="${c.id}">${ldpEsc(c.name)}${c.active ? '' : ' (paused)'}</option>`
+            ).join('');
+        }
+
+        function ldpStatus(msg, isError) {
+            const el = document.getElementById('ldp-action-status');
+            if (!el) return;
+            el.textContent = msg;
+            el.className = 'ldp-status ' + (isError ? 'error' : 'success');
+        }
+
+        async function ldpSetStage(stage) {
+            const fd = new FormData(); fd.append('stage', stage);
+            try {
+                const r = await fetch('/api/leads/' + ldpCurrentId + '/set-stage', { method: 'POST', body: fd });
+                const j = await r.json();
+                if (!r.ok) { ldpStatus(j.error || 'Could not update stage.', true); return; }
+                ldpStatus('Stage updated.', false);
+                ldpRefresh();
+            } catch (e) { ldpStatus('Could not update stage.', true); }
+        }
+        async function ldpToggleExclude() {
+            try {
+                const r = await fetch('/api/leads/' + ldpCurrentId + '/toggle-exclude', { method: 'POST' });
+                const j = await r.json();
+                if (!r.ok) { ldpStatus(j.error || 'Could not update.', true); return; }
+                ldpStatus(j.excluded ? 'Excluded.' : 'Restored.', false);
+                ldpRefresh();
+            } catch (e) { ldpStatus('Could not update.', true); }
+        }
+        async function ldpAddNote(e) {
+            e.preventDefault();
+            const input = document.getElementById('ldp-note-input');
+            const text = input.value.trim();
+            if (!text) return;
+            const fd = new FormData(); fd.append('text', text);
+            try {
+                const r = await fetch('/api/leads/' + ldpCurrentId + '/note', { method: 'POST', body: fd });
+                const j = await r.json();
+                if (!r.ok) { ldpStatus(j.error || 'Could not add note.', true); return; }
+                input.value = '';
+                ldpStatus('Note added.', false);
+                ldpRefresh();
+            } catch (e) { ldpStatus('Could not add note.', true); }
+        }
+        async function ldpEnroll() {
+            const sel = document.getElementById('ldp-enroll-select');
+            const campaignId = sel.value;
+            if (!campaignId) { ldpStatus('Choose a sequence first.', true); return; }
+            const fd = new FormData(); fd.append('campaign_id', campaignId);
+            try {
+                const r = await fetch('/api/leads/' + ldpCurrentId + '/enroll', { method: 'POST', body: fd });
+                const j = await r.json();
+                if (!r.ok) { ldpStatus(j.error || 'Could not enroll.', true); return; }
+                ldpStatus('Enrolled.', false);
+                ldpRefresh();
+            } catch (e) { ldpStatus('Could not enroll.', true); }
+        }
+    </script>
+
+    <script>
+        document.querySelectorAll('[data-toggle="section"]').forEach(function (el) {
+            el.addEventListener('click', function (e) {
+                e.preventDefault();
+                this.closest('.nav-section').classList.toggle('open');
+            });
+        });
+    </script>
+</body>
+</html>
