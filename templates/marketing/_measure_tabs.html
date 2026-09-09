@@ -8,6 +8,7 @@
 {% set mt = request.endpoint or '' %}
 <div style="display:flex; gap:4px; margin-bottom:22px; border-bottom:1px solid var(--gray-200);">
   {% for tab_ep, tab_url, tab_label in [
+      ('measure_daily_leadgen', '/marketing/measure/daily', 'Daily'),
       ('measure_effectiveness', '/marketing/measure/effectiveness', 'Effectiveness'),
       ('measure_traffic', '/marketing/measure/traffic', 'Traffic'),
       ('measure_publications', '/marketing/measure/publications', 'Publications'),

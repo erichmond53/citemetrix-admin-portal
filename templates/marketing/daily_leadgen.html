@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Measure — Daily{% endblock %}
+{% block page_title %}Measure{% endblock %}
+{% block topbar_actions %}
+  <button type="button" class="btn btn-primary" id="dl-refresh-btn" onclick="dlRefresh()">&#8635; Refresh</button>
+  <span id="dl-refresh-status" style="margin-left:10px;font-size:13px;color:var(--gray-500);"></span>
+  <script>
+    var DL_STARTED_GENERATED = {{ (data.generated if data else '')|tojson }};
+    function dlRefresh() {
+      var btn = document.getElementById('dl-refresh-btn');
+      var status = document.getElementById('dl-refresh-status');
+      btn.disabled = true;
+      status.textContent = 'Refreshing…';
+      fetch('/marketing/measure/daily/refresh', {method: 'POST'})
+        .then(function () { dlPoll(0); })
+        .catch(function () { status.textContent = 'Failed to start refresh.'; btn.disabled = false; });
+    }
+    function dlPoll(elapsedSec) {
+      var status = document.getElementById('dl-refresh-status');
+      if (elapsedSec >= 60) { status.textContent = 'Still running — reload the page in a bit to check.'; document.getElementById('dl-refresh-btn').disabled = false; return; }
+      fetch('/marketing/measure/daily/refresh-status').then(function (r) { return r.json(); }).then(function (j) {
+        if (j.generated && j.generated !== DL_STARTED_GENERATED) { status.textContent = 'Updated — reloading…'; location.reload(); return; }
+        setTimeout(function () { dlPoll(elapsedSec + 3); }, 3000);
+      }).catch(function () { setTimeout(function () { dlPoll(elapsedSec + 3); }, 3000); });
+    }
+  </script>
+{% endblock %}
+{% block content %}
+{% include "marketing/_measure_tabs.html" %}
+
+{% if not data %}
+  <div class="card"><p style="color:var(--gray-500);">No snapshot yet. Click <strong>Refresh</strong> to pull from GA4 + the lead pool.</p></div>
+{% else %}
+
+<style>
+  .dl-tabs { display:flex; gap:4px; border-bottom:2px solid var(--gray-200); margin-bottom:20px; }
+  .dl-tab { background:none; border:none; padding:11px 20px; font-size:14px; font-weight:600; color:var(--gray-500); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; }
+  .dl-tab:hover { color:var(--gray-800); }
+  .dl-tab.active { color:var(--primary); border-bottom-color:var(--primary); }
+  .dl-panel { display:none; }
+  .dl-panel.active { display:block; }
+  .dl-bucket-content { background:rgba(79,70,229,.05); }
+</style>
+
+<p style="color:var(--gray-400);font-size:12px;margin:0 0 16px;">Generated {{ data.generated }} &middot; Customers/Revenue are a trailing {{ data.customers_window_days }}-day rollup regardless of the tab below — conversions lag the visit that produced the lead.</p>
+
+<div class="dl-tabs">
+  <button type="button" class="dl-tab active" data-dl-tab="1d">Yesterday</button>
+  <button type="button" class="dl-tab" data-dl-tab="7d">Last 7 days</button>
+  <button type="button" class="dl-tab" data-dl-tab="30d">Last 30 days</button>
+</div>
+
+{% for period in ['1d', '7d', '30d'] %}
+{% set pd = data.periods[period] %}
+<div class="dl-panel {{ 'active' if period == '1d' else '' }}" data-dl-panel="{{ period }}">
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Channel &mdash; {{ 'yesterday (' ~ data.yesterday ~ ')' if period == '1d' else ('last 7 days' if period == '7d' else 'last 30 days') }}</div>
+      <span style="font-size:12px;color:var(--gray-400);">{{ pd.direct_share }}% direct / unattributed</span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="table">
+        <thead><tr>
+          <th>Channel</th><th style="text-align:right;">Sessions</th><th style="text-align:right;">Engaged</th>
+          <th style="text-align:right;">Avg dur.</th><th style="text-align:right;">Scans</th>
+          <th style="text-align:right;">Leads</th><th style="text-align:right;">Customers (30d)</th><th style="text-align:right;">Revenue (30d)</th>
+        </tr></thead>
+        <tbody>
+        {% for r in pd.rows %}
+          <tr class="{{ 'dl-bucket-content' if r.bucket == 'content' else '' }}">
+            <td style="font-weight:500;">{{ r.label }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.sessions) }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.engaged) }}</td>
+            <td style="text-align:right;">{{ r.avg_duration }}s</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ r.scans }}</td>
+            <td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums;">{{ r.leads }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ r.customers }}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '${:,.0f}'.format(r.revenue) if r.revenue else '—' }}</td>
+          </tr>
+        {% endfor %}
+        {% if not pd.rows %}<tr><td colspan="8" style="color:var(--gray-400);">No sessions in this window.</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><div class="card-title">Content &mdash; drilled down to the post</div></div>
+    <div style="overflow-x:auto;">
+      <table class="table">
+        <thead><tr>
+          <th>Source</th><th>Platform</th><th>Title</th><th style="text-align:right;">Sessions</th>
+          <th style="text-align:right;">Scans</th><th style="text-align:right;">Leads</th>
+        </tr></thead>
+        <tbody>
+        {% for p in pd.posts %}
+          <tr>
+            <td><span style="font-size:11px;padding:2px 8px;border-radius:10px;{{ 'background:rgba(79,70,229,.1);color:var(--primary);' if p.source_type == 'engine' else 'background:var(--gray-100);color:var(--gray-600);' }}">{{ 'Engine' if p.source_type == 'engine' else 'Manual' }}</span></td>
+            <td>{{ p.platform }}</td>
+            <td style="max-width:300px;">{% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.title }}</a>{% else %}{{ p.title }}{% endif %}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ p.sessions }}</td>
+            <td style="text-align:right;">{{ p.scans }}</td>
+            <td style="text-align:right;font-weight:600;">{{ p.leads }}</td>
+          </tr>
+        {% endfor %}
+        {% if not pd.posts %}<tr><td colspan="6" style="color:var(--gray-400);">No tracked-post sessions in this window yet — this fills in as Companions get published and Publication Log entries get logged.</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+<script>
+(function(){
+  document.querySelectorAll('.dl-tab').forEach(function(tab){
+    tab.addEventListener('click', function(){
+      document.querySelectorAll('.dl-tab').forEach(function(t){ t.classList.remove('active'); });
+      document.querySelectorAll('.dl-panel').forEach(function(p){ p.classList.remove('active'); });
+      tab.classList.add('active');
+      document.querySelector('.dl-panel[data-dl-panel="' + tab.getAttribute('data-dl-tab') + '"]').classList.add('active');
+    });
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}
