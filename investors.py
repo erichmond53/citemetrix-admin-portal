@@ -182,7 +182,20 @@ def upsert_investor(db_conn, analysis, raw_research):
 # ─────────────────────────────────────────────────────────────────────────────
 # Orchestration (background-job entry points, mirror competition.py)
 # ─────────────────────────────────────────────────────────────────────────────
-def research_investor(db_conn, admin_cursor, firm_name, website, progress=None):
+class NoRequestOrigin(Exception):
+    """Raised when a research function is called with no authenticated human
+    actor behind it. Per CITEMETRIX-CODE-BRIEF-COMPETITOR-RESCAN-RUNAWAY-2026-09-09.md
+    §8: 'Investor research should only happen on request... never on any kind
+    of automated schedule.' This is the guard that makes that a code fact
+    rather than a policy nobody's enforcing -- a future accidental cron/
+    scheduler registration calling these functions with no user_id fails
+    loudly here instead of quietly researching 80 firms on a timer."""
+    pass
+
+
+def research_investor(db_conn, admin_cursor, firm_name, website, user_id, progress=None):
+    if not user_id:
+        raise NoRequestOrigin('research_investor requires an authenticated user_id -- refusing to run with no request origin.')
     keys = get_api_keys(admin_cursor)
     if not keys.get('perplexity'):
         return {'error': 'Perplexity API key not configured. Add it in Settings.'}
@@ -209,17 +222,21 @@ def research_investor(db_conn, admin_cursor, firm_name, website, progress=None):
             'fit_score': analysis.get('fit_score')}
 
 
-def rescan_investor(db_conn, admin_cursor, investor_id, progress=None):
+def rescan_investor(db_conn, admin_cursor, investor_id, user_id, progress=None):
+    if not user_id:
+        raise NoRequestOrigin('rescan_investor requires an authenticated user_id -- refusing to run with no request origin.')
     cur = db_conn.cursor()
     cur.execute("SELECT firm_name, website FROM wp_citemetrix_investors WHERE id = %s", (investor_id,))
     row = cur.fetchone()
     if not row:
         return {'error': 'Investor not found.'}
-    return research_investor(db_conn, admin_cursor, row['firm_name'], row['website'], progress=progress)
+    return research_investor(db_conn, admin_cursor, row['firm_name'], row['website'], user_id, progress=progress)
 
 
-def suggest_investors(db_conn, admin_cursor, progress=None):
+def suggest_investors(db_conn, admin_cursor, user_id, progress=None):
     """Mine wp_citemetrix_competition funding data -> Claude -> investor-firm leads."""
+    if not user_id:
+        raise NoRequestOrigin('suggest_investors requires an authenticated user_id -- refusing to run with no request origin.')
     keys = get_api_keys(admin_cursor)
     cur = db_conn.cursor()
     cur.execute("""SELECT company_name, funding_total, funding_stage, raw_research

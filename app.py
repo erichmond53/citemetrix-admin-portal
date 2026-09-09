@@ -2873,7 +2873,7 @@ def _investor_job_update(job_id, **fields):
         conn.close()
 
 
-def _run_investor_job(job_id, job_type, investor_id, firm_name, website):
+def _run_investor_job(job_id, job_type, investor_id, firm_name, website, user_id):
     prod_conn = None
     admin_conn = None
     try:
@@ -2887,11 +2887,11 @@ def _run_investor_job(job_id, job_type, investor_id, firm_name, website):
 
         with admin_conn.cursor() as admin_cursor:
             if job_type == 'rescan':
-                result = rescan_investor(prod_conn, admin_cursor, investor_id, progress=progress)
+                result = rescan_investor(prod_conn, admin_cursor, investor_id, user_id, progress=progress)
             elif job_type == 'suggest':
-                result = suggest_investors(prod_conn, admin_cursor, progress=progress)
+                result = suggest_investors(prod_conn, admin_cursor, user_id, progress=progress)
             else:
-                result = research_investor(prod_conn, admin_cursor, firm_name, website, progress=progress)
+                result = research_investor(prod_conn, admin_cursor, firm_name, website, user_id, progress=progress)
 
         if isinstance(result, dict) and 'error' in result:
             _investor_job_update(job_id, status='error', phase='Failed', error=str(result['error'])[:2000])
@@ -2957,14 +2957,15 @@ def api_investors_research():
         website = (d.get('website') or '').strip()
         if not firm and not website:
             return jsonify({'error': 'Enter a firm name or website.'}), 400
+        user_id = getattr(current_user, 'id', None)
         conn = get_admin_db()
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO cm_investor_jobs (job_type, firm_name, website, status, created_by)
                            VALUES ('research', %s, %s, 'queued', %s)""",
-                        (firm, website, getattr(current_user, 'id', None)))
+                        (firm, website, user_id))
             job_id = cur.lastrowid
         conn.commit(); conn.close()
-        threading.Thread(target=_run_investor_job, args=(job_id, 'research', None, firm, website), daemon=True).start()
+        threading.Thread(target=_run_investor_job, args=(job_id, 'research', None, firm, website, user_id), daemon=True).start()
         return jsonify({'job_id': job_id, 'status': 'queued'}), 202
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -2975,13 +2976,14 @@ def api_investors_research():
 @role_required('admin',)
 def api_investors_rescan(id):
     try:
+        user_id = getattr(current_user, 'id', None)
         conn = get_admin_db()
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO cm_investor_jobs (job_type, investor_id, status, created_by)
-                           VALUES ('rescan', %s, 'queued', %s)""", (id, getattr(current_user, 'id', None)))
+                           VALUES ('rescan', %s, 'queued', %s)""", (id, user_id))
             job_id = cur.lastrowid
         conn.commit(); conn.close()
-        threading.Thread(target=_run_investor_job, args=(job_id, 'rescan', id, None, None), daemon=True).start()
+        threading.Thread(target=_run_investor_job, args=(job_id, 'rescan', id, None, None, user_id), daemon=True).start()
         return jsonify({'job_id': job_id, 'status': 'queued'}), 202
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -2992,13 +2994,14 @@ def api_investors_rescan(id):
 @role_required('admin',)
 def api_investors_suggest():
     try:
+        user_id = getattr(current_user, 'id', None)
         conn = get_admin_db()
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO cm_investor_jobs (job_type, status, created_by)
-                           VALUES ('suggest', 'queued', %s)""", (getattr(current_user, 'id', None),))
+                           VALUES ('suggest', 'queued', %s)""", (user_id,))
             job_id = cur.lastrowid
         conn.commit(); conn.close()
-        threading.Thread(target=_run_investor_job, args=(job_id, 'suggest', None, None, None), daemon=True).start()
+        threading.Thread(target=_run_investor_job, args=(job_id, 'suggest', None, None, None, user_id), daemon=True).start()
         return jsonify({'job_id': job_id, 'status': 'queued'}), 202
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -3104,7 +3107,7 @@ def _investor_exists(prod_conn, firm, website):
     return False
 
 
-def _run_investor_batch(batch_id, rows):
+def _run_investor_batch(batch_id, rows, user_id):
     """Sequential batch runner. Fresh DB connections PER firm — research makes long
     HTTP calls (Perplexity + Claude), so a held-open connection could go stale."""
     try:
@@ -3124,7 +3127,7 @@ def _run_investor_batch(batch_id, rows):
                     continue
                 admin_conn = get_admin_db()
                 with admin_conn.cursor() as admin_cursor:
-                    result = research_investor(prod_conn, admin_cursor, firm, website)
+                    result = research_investor(prod_conn, admin_cursor, firm, website, user_id)
                 if isinstance(result, dict) and 'error' in result:
                     failed += 1
                 else:
@@ -3183,14 +3186,15 @@ def api_investors_batch():
         CAP = 100
         capped = len(pairs) > CAP
         pairs = pairs[:CAP]
+        user_id = getattr(current_user, 'id', None)
         conn = get_admin_db()
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO cm_investor_batches (total, status, phase, created_by)
                            VALUES (%s, 'queued', 'Queued', %s)""",
-                        (len(pairs), getattr(current_user, 'id', None)))
+                        (len(pairs), user_id))
             batch_id = cur.lastrowid
         conn.commit(); conn.close()
-        threading.Thread(target=_run_investor_batch, args=(batch_id, pairs), daemon=True).start()
+        threading.Thread(target=_run_investor_batch, args=(batch_id, pairs, user_id), daemon=True).start()
         return jsonify({'batch_id': batch_id, 'total': len(pairs), 'capped': capped}), 202
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -6811,6 +6815,191 @@ def campaign_builder_save():
     return redirect(url_for('campaign_builder'))
 
 
+# ── Publication Log — CITEMETRIX-MEASUREMENT-ARCHITECTURE-2026-09-09.md §6:
+#    "one authoritative content record and it lives in the product." This is a
+#    superset VIEW, not a second registry: engine-generated companions are read
+#    live from the WP product DB (get_db(), same connection migrate_beta_signups.py
+#    already uses to reach wp_citemetrix_ce_* tables) and merged in Python with
+#    hand-entered posts, which write into source_refs (kind='publication') --
+#    giving decisions-v2 §2 ruling 10 the interface it was missing. No caching,
+#    no nightly sync, no second table: always current, and there's nothing to
+#    go stale.
+#
+#    Same channel vocabulary as CiteMetrix_Content_Engine::COMPANION_RECIPES in
+#    the WP plugin (4.58.0) -- no shared runtime to import a registry from, so
+#    PUBLICATION_CHANNELS is kept in sync by hand, same caveat as
+#    jobs/traffic.py's CHANNEL_NORMALIZATION_MAP.
+PUBLICATION_CHANNELS = {
+    'linkedin_article': {'label': 'LinkedIn Article', 'utm_source': 'linkedin', 'utm_medium': 'article', 'link_policy': 'tracked'},
+    'linkedin_post':    {'label': 'LinkedIn Post',    'utm_source': 'linkedin', 'utm_medium': 'organic_social', 'link_policy': 'tracked'},
+    'reddit':           {'label': 'Reddit',           'utm_source': 'reddit',   'utm_medium': 'organic_social', 'link_policy': 'none'},
+    'medium':           {'label': 'Medium',           'utm_source': 'medium',   'utm_medium': 'article', 'link_policy': 'tracked'},
+    'substack':         {'label': 'Substack',         'utm_source': 'substack', 'utm_medium': 'article', 'link_policy': 'tracked'},
+    'x':                {'label': 'X',                'utm_source': 'x',        'utm_medium': 'organic_social', 'link_policy': 'tracked'},
+    'facebook':         {'label': 'Facebook',         'utm_source': 'facebook', 'utm_medium': 'organic_social', 'link_policy': 'tracked'},
+    'threads':          {'label': 'Threads',          'utm_source': 'threads',  'utm_medium': 'organic_social', 'link_policy': 'tracked'},
+    'instagram':        {'label': 'Instagram',        'utm_source': 'instagram', 'utm_medium': 'organic_social', 'link_policy': 'plain'},
+}
+
+
+def _pub_channel_label(slug):
+    ch = PUBLICATION_CHANNELS.get(slug)
+    return ch['label'] if ch else (slug or '—')
+
+
+@app.route('/marketing/measure/publications')
+@login_required
+@role_required('admin', 'marketing')
+def measure_publications():
+    rows = []
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute("""SELECT c.id, c.channel, c.status, c.title, c.published_url,
+                                  c.published_at, c.tracked_url, c.rate_at_publish, g.topic
+                           FROM wp_citemetrix_ce_companions c
+                           JOIN wp_citemetrix_ce_generations g ON g.id = c.generation_id
+                           WHERE c.published_at IS NOT NULL
+                           ORDER BY c.published_at DESC LIMIT 200""")
+            for c in cur.fetchall():
+                rows.append({
+                    'source_type': 'engine', 'when': c['published_at'], 'platform': c['channel'],
+                    'platform_label': _pub_channel_label(c['channel']),
+                    'title': c['title'] or c['topic'], 'url': c['published_url'],
+                    'tracked_url': c['tracked_url'],
+                    'not_tracked': (PUBLICATION_CHANNELS.get(c['channel'], {}).get('link_policy') == 'none'),
+                    'reach': None, 'notes': None, 'rate_at_publish': c['rate_at_publish'],
+                })
+        conn.close()
+    except Exception:
+        app.logger.exception('measure_publications: product DB read failed')
+
+    try:
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id, source, label, base_url, tagged_url, reach, notes,
+                                  published_at, created_at
+                           FROM source_refs WHERE kind='publication'
+                           ORDER BY COALESCE(published_at, created_at) DESC LIMIT 200""")
+            for r in cur.fetchall():
+                rows.append({
+                    'source_type': 'manual', 'when': r['published_at'] or r['created_at'],
+                    'platform': r['source'], 'platform_label': _pub_channel_label(r['source']),
+                    'title': r['label'], 'url': r['base_url'], 'tracked_url': r['tagged_url'],
+                    'not_tracked': (PUBLICATION_CHANNELS.get(r['source'], {}).get('link_policy') == 'none'),
+                    'reach': r['reach'], 'notes': r['notes'], 'rate_at_publish': None,
+                })
+        conn.close()
+    except Exception:
+        app.logger.exception('measure_publications: admin DB read failed')
+
+    rows.sort(key=lambda r: r['when'] or datetime.min, reverse=True)
+    return render_template('marketing/publications.html', rows=rows, channels=PUBLICATION_CHANNELS)
+
+
+@app.route('/marketing/measure/publications/save', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def publications_save():
+    import re
+    from urllib.parse import urlencode
+    def slug(v):
+        return re.sub(r'[^a-z0-9_-]+', '', (v or '').strip().lower().replace(' ', '_'))[:120]
+
+    platform = request.form.get('platform') or ''
+    title    = (request.form.get('title') or '').strip()[:255]
+    base_url = (request.form.get('url') or '').strip()[:255]
+    reach_raw = (request.form.get('reach') or '').strip()
+    notes    = (request.form.get('notes') or '').strip() or None
+    pub_on   = (request.form.get('published_on') or '').strip()
+
+    ch = PUBLICATION_CHANNELS.get(platform)
+    if not ch or not title or not base_url.startswith('http'):
+        return redirect(url_for('measure_publications'))
+    reach = int(reach_raw) if reach_raw.isdigit() else None
+    published_at = pub_on if pub_on else datetime.utcnow().strftime('%Y-%m-%d')
+
+    try:
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO source_refs
+                (path, kind, label, source, medium, base_url, reach, notes, published_at, uploaded_by, created_at)
+                VALUES ('direct','publication',%s,%s,%s,%s,%s,%s,%s,%s, UTC_TIMESTAMP())""",
+                (title, ch['utm_source'], ch['utm_medium'], base_url, reach, notes, published_at, current_user.id))
+            new_id = cur.lastrowid
+            # link_policy mirrors the WP registry: 'none' (Reddit) never gets a
+            # tag -- a visible UTM there reads as self-promotion and risks the
+            # post being removed, same reasoning whether the post came from the
+            # engine or was typed by hand. 'plain' (Instagram) links through
+            # untagged. Everything else gets the full utm_source/medium/campaign/
+            # content tag, campaign derived from the title since there's no
+            # separate campaign field on this simpler form.
+            if ch['link_policy'] == 'none':
+                tagged_url = None
+            elif ch['link_policy'] == 'plain':
+                tagged_url = base_url
+            else:
+                params = {'utm_source': ch['utm_source'], 'utm_medium': ch['utm_medium'],
+                          'utm_campaign': slug(title) or f'post_{new_id}', 'utm_content': f'manual_{new_id}'}
+                sep = '&' if '?' in base_url else '?'
+                tagged_url = base_url + sep + urlencode(params)
+            if tagged_url:
+                cur.execute("UPDATE source_refs SET tagged_url=%s WHERE id=%s", (tagged_url, new_id))
+        conn.commit(); conn.close()
+    except Exception:
+        app.logger.exception('publications_save failed')
+    return redirect(url_for('measure_publications'))
+
+
+# ── Daily Lead-Gen View — decisions-v3 §3/§6 step 3: "one page, date-first, all
+#    six channel rows... Eric opens one page each morning and knows which
+#    channel is working." Data comes from jobs/daily_leadgen.py (same
+#    fire-and-forget-Popen-then-poll refresh pattern as Traffic, since the GA4 +
+#    RDS + product-DB queries take a few seconds -- long enough to not want it
+#    blocking a gunicorn worker on every page load).
+@app.route('/marketing/measure/daily')
+@login_required
+@role_required('admin', 'marketing')
+def measure_daily_leadgen():
+    import os as _os, json as _json
+    p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'reports', 'daily_leadgen', 'daily-leadgen-latest.json')
+    try:
+        data = _json.load(open(p))
+    except Exception:
+        data = None
+    return render_template('marketing/daily_leadgen.html', data=data)
+
+
+@app.route('/marketing/measure/daily/refresh', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def daily_leadgen_refresh():
+    import subprocess, os as _os
+    base = _os.path.dirname(_os.path.abspath(__file__))
+    try:
+        subprocess.Popen(
+            [_os.path.join(base, 'venv', 'bin', 'python'), _os.path.join(base, 'jobs', 'daily_leadgen.py')],
+            cwd=base, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+        )
+    except Exception:
+        app.logger.exception('failed to start daily_leadgen refresh')
+    return jsonify({'success': True})
+
+
+@app.route('/marketing/measure/daily/refresh-status')
+@login_required
+@role_required('admin', 'marketing')
+def daily_leadgen_refresh_status():
+    import os as _os, json as _json
+    p = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'reports', 'daily_leadgen', 'daily-leadgen-latest.json')
+    generated = None
+    try:
+        generated = _json.load(open(p)).get('generated')
+    except Exception:
+        pass
+    return jsonify({'generated': generated})
+
+
 # ── Leads — step1brief.md SS17 step 2: the merged view over the unified `leads`
 #    pool (was two pages reading two different tables -- this one reading
 #    wp_citemetrix_score_leads directly, drip-leads reading `leads`. That was
@@ -7219,6 +7408,67 @@ def api_leads_detail(lead_id):
                 except (ValueError, TypeError):
                     pass
 
+            # Full scan findings, straight from the product DB's own leads table (not the
+            # lead_events 'free_check_completed' payload above -- that one is deliberately
+            # thin, sourced from citemetrix_freecheck_log which has no platform_results
+            # column; see leads_drip.py's process_check_completions() docstring). This is
+            # the same wp_citemetrix_score_leads row the WP results page itself reads
+            # (class-citemetrix-free-score.php), keyed uniquely on (email, domain), so a
+            # lead who left an email while checking their score has a full, untruncated
+            # per-platform response here -- exactly what's missing for writing a follow-up
+            # that references what the lead actually saw.
+            score_report = None
+            if lead.get('email'):
+                try:
+                    pconn = get_db()
+                    try:
+                        with pconn.cursor() as pcur:
+                            pcur.execute(
+                                "SELECT domain, brand_name, model_score, platform_results, scan_query, created_at "
+                                "FROM wp_citemetrix_score_leads WHERE email=%s ORDER BY created_at DESC LIMIT 1",
+                                (lead['email'],)
+                            )
+                            sr = pcur.fetchone()
+                    finally:
+                        pconn.close()
+                    if sr:
+                        # platform_results is NOT a flat {platform: result} map -- it's the
+                        # full scan blob class-citemetrix-free-score.php builds: brand_results
+                        # (asked each platform directly about the brand -- recognition/
+                        # sentiment/the actual answer text) and category_results (asked each
+                        # platform a generic category query, e.g. "best digital marketing
+                        # agency", with NO brand name in the prompt -- this is what
+                        # appeared_on/absent_on/competitors are computed from, and it's the
+                        # real "here's who AI recommends instead of you" finding).
+                        pr = json.loads(sr['platform_results']) if sr['platform_results'] else {}
+                        def _platform_list(results_dict):
+                            if not isinstance(results_dict, dict):
+                                return []
+                            return [
+                                {'platform': r.get('platform'), 'status': r.get('status'),
+                                 'mentioned': r.get('mentioned'), 'sentiment': r.get('sentiment'),
+                                 'response': r.get('response')}
+                                for r in results_dict.values() if isinstance(r, dict) and r.get('platform')
+                            ]
+                        score_report = {
+                            'domain': sr['domain'], 'brand_name': sr['brand_name'],
+                            'category': pr.get('category'), 'category_query': pr.get('category_query'),
+                            'model_score': sr['model_score'],
+                            'brand_recognition': pr.get('brand_recognition'),
+                            'category_visibility': pr.get('category_visibility'),
+                            'competitors': pr.get('competitors') or [],
+                            'appeared_on': pr.get('appeared_on') or [],
+                            'absent_on': pr.get('absent_on') or [],
+                            'created_at': sr['created_at'],
+                            'brand_platforms': _platform_list(pr.get('brand_results')),
+                            'category_platforms': _platform_list(pr.get('category_results')),
+                        }
+                except (pymysql.MySQLError, ValueError, TypeError):
+                    # cross-box product DB unreachable, or a malformed platform_results blob --
+                    # either way this is enrichment, not the panel's core data, so it must not
+                    # take the rest of the lead detail down with it
+                    score_report = None
+
             cur.execute(
                 "SELECT type, channel, occurred_at, payload FROM lead_events WHERE lead_id=%s ORDER BY occurred_at DESC", (lead_id,)
             )
@@ -7264,7 +7514,7 @@ def api_leads_detail(lead_id):
         conn.close()
 
     body = json.dumps({
-        'lead': lead, 'touches': touches, 'free_check': free_check,
+        'lead': lead, 'touches': touches, 'free_check': free_check, 'score_report': score_report,
         'timeline': timeline, 'enrollments': enrollments, 'dup_siblings': dup_siblings,
     }, default=str)
     return Response(body, mimetype='application/json')
