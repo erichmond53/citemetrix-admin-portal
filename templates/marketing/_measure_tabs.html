@@ -1,13 +1,16 @@
-{# step1brief.md SS17 step 3: shared tab bar for the four Measure pages.
+{# step1brief.md SS17 step 3: shared tab bar for the Measure pages.
    Each tab is still its own route/request (not one merged page) -- keeps
    each page's existing data-gathering logic untouched and means a slow
    action on one tab (see marketing_traffic_refresh) never blocks another
-   tab, since they were never loaded into the same request to begin with. #}
+   tab, since they were never loaded into the same request to begin with.
+   Publications added per CITEMETRIX-MEASUREMENT-ARCHITECTURE-2026-09-09.md
+   §6/§9 step 4. #}
 {% set mt = request.endpoint or '' %}
 <div style="display:flex; gap:4px; margin-bottom:22px; border-bottom:1px solid var(--gray-200);">
   {% for tab_ep, tab_url, tab_label in [
       ('measure_effectiveness', '/marketing/measure/effectiveness', 'Effectiveness'),
       ('measure_traffic', '/marketing/measure/traffic', 'Traffic'),
+      ('measure_publications', '/marketing/measure/publications', 'Publications'),
       ('measure_deliverability', '/marketing/measure/deliverability', 'Deliverability'),
       ('measure_survey', '/marketing/measure/survey', 'Survey')] %}
     <a href="{{ tab_url }}" style="padding:10px 18px; font-size:14px; font-weight:500; text-decoration:none; border-bottom:2px solid {{ 'var(--primary)' if mt == tab_ep else 'transparent' }}; color:{{ 'var(--primary)' if mt == tab_ep else 'var(--gray-500)' }};">{{ tab_label }}</a>

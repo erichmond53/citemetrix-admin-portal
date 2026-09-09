@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Measure — Publications{% endblock %}
+{% block page_title %}Measure{% endblock %}
+
+{% block content %}
+{% include "marketing/_measure_tabs.html" %}
+
+<style>
+  .pl-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; }
+  @media(max-width:700px){ .pl-grid{ grid-template-columns:1fr; } }
+  .pl-field label { display:block; font-size:12px; font-weight:600; color:var(--gray-600); margin-bottom:5px; text-transform:uppercase; letter-spacing:.02em; }
+  .pl-field input, .pl-field select, .pl-field textarea { width:100%; padding:9px 11px; border:1px solid var(--gray-300); border-radius:8px; font-size:14px; color:var(--gray-800); background:#fff; }
+  .pl-field input:focus, .pl-field select:focus, .pl-field textarea:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
+  .pl-hint { font-size:11px; color:var(--gray-400); margin-top:4px; }
+  .pl-preview { background:var(--gray-50); border:1px solid var(--gray-200); border-radius:8px; padding:14px 16px; margin-top:4px; }
+  .pl-preview code { font-family:var(--mono, monospace); font-size:13px; color:var(--primary); word-break:break-all; }
+  .pl-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .pl-badge-engine { background:rgba(79,70,229,.1); color:var(--primary); }
+  .pl-badge-manual { background:var(--gray-100); color:var(--gray-600); }
+</style>
+
+<div class="card">
+  <div class="card-header"><div class="card-title">Log a post</div></div>
+  <p style="color:var(--gray-500);font-size:13px;margin:-6px 0 18px;">
+    For LinkedIn personal, Substack, or Medium posts written by hand -- Content Engine companions show up
+    below automatically, this is only for what the engine didn't write. Reddit never gets a tracked link
+    here either, same as the engine: a visible tag reads as self-promotion and risks the post being removed.</p>
+
+  <form method="POST" action="/marketing/measure/publications/save" id="plForm">
+    <div class="pl-grid">
+      <div class="pl-field">
+        <label>Platform</label>
+        <select name="platform" id="pl_platform">
+          {% for slug, ch in channels.items() %}<option value="{{ slug }}">{{ ch.label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="pl-field">
+        <label>Published on</label>
+        <input type="date" name="published_on" id="pl_date">
+        <div class="pl-hint">defaults to today if left blank</div>
+      </div>
+      <div class="pl-field" style="grid-column:1 / -1;">
+        <label>Title</label>
+        <input name="title" id="pl_title" placeholder="What the post is about" autocomplete="off">
+      </div>
+      <div class="pl-field" style="grid-column:1 / -1;">
+        <label>URL</label>
+        <input name="url" id="pl_url" placeholder="https://..." autocomplete="off">
+      </div>
+      <div class="pl-field">
+        <label>Reach <span style="text-transform:none;color:var(--gray-400);font-weight:400;">(optional, manual)</span></label>
+        <input type="number" min="0" name="reach" id="pl_reach" placeholder="impressions / views if the platform shows you one">
+      </div>
+      <div class="pl-field">
+        <label>Notes <span style="text-transform:none;color:var(--gray-400);font-weight:400;">(optional)</span></label>
+        <input name="notes" id="pl_notes" placeholder="anything worth remembering about this one">
+      </div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px;text-transform:uppercase;">Tracked link preview</label>
+      <div class="pl-preview"><code id="pl_preview">&mdash;</code></div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <button type="submit" class="btn btn-primary">Log it</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header"><div class="card-title">Publication Log ({{ rows|length }})</div></div>
+  <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr>
+        <th>Date</th><th>Source</th><th>Platform</th><th>Title</th><th>Link</th><th style="text-align:right;">Reach</th><th>Citation rate</th><th>Notes</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td style="color:var(--gray-400);font-size:12px;white-space:nowrap;">{{ r.when.strftime('%Y-%m-%d') if r.when else '—' }}</td>
+          <td><span class="pl-badge {{ 'pl-badge-engine' if r.source_type == 'engine' else 'pl-badge-manual' }}">{{ 'Engine' if r.source_type == 'engine' else 'Manual' }}</span></td>
+          <td>{{ r.platform_label }}</td>
+          <td style="max-width:280px;">{{ r.title or '—' }}</td>
+          <td style="max-width:260px;">
+            {% if r.not_tracked %}<span style="color:var(--gray-400);font-style:italic;font-size:12px;">Not tracked by design</span>
+            {% elif r.tracked_url %}<code style="font-size:12px;color:var(--primary);word-break:break-all;">{{ r.tracked_url }}</code>
+            {% elif r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener" style="font-size:12px;">{{ r.url }}</a>
+            {% else %}<span style="color:var(--gray-400);">—</span>{% endif %}
+          </td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.reach) if r.reach else '—' }}</td>
+          <td>{{ (r.rate_at_publish ~ '%') if r.rate_at_publish is not none else '—' }}</td>
+          <td style="color:var(--gray-500);font-size:12px;max-width:200px;">{{ r.notes or '—' }}</td>
+        </tr>
+      {% endfor %}
+      {% if not rows %}<tr><td colspan="8" style="color:var(--gray-400);">No publications logged yet.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  var CHANNELS = {{ channels|tojson }};
+  var f = {
+    platform: document.getElementById('pl_platform'), url: document.getElementById('pl_url'),
+    title: document.getElementById('pl_title')
+  };
+  var out = document.getElementById('pl_preview');
+  function slug(v){ return (v||'').trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_-]/g,''); }
+  function build(){
+    var ch = CHANNELS[f.platform.value];
+    var url = (f.url.value||'').trim();
+    if (!ch || !url){ out.textContent='—'; return; }
+    if (ch.link_policy === 'none'){ out.textContent='Not tracked by design'; return; }
+    if (ch.link_policy === 'plain'){ out.textContent=url; return; }
+    var p = ['utm_source='+ch.utm_source, 'utm_medium='+ch.utm_medium];
+    if (slug(f.title.value)) p.push('utm_campaign='+slug(f.title.value));
+    out.textContent = url + (url.indexOf('?')>-1?'&':'?') + p.join('&') + '&utm_content=(assigned on save)';
+  }
+  Object.values(f).forEach(function(el){ el && el.addEventListener('input', build); });
+  build();
+})();
+</script>
+{% endblock %}
