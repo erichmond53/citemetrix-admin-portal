@@ -117,7 +117,8 @@
 
     <div class="grid grid-2">
       <div>
-        <div class="card-title" style="margin-bottom:10px;">Top Source / Medium</div>
+        <div class="card-title" style="margin-bottom:2px;">Top Source / Medium</div>
+        {% if w.unattributed_share is defined %}<div style="font-size:12px;color:var(--gray-400);margin-bottom:8px;">{{ w.unattributed_share }}% unattributed -- (direct), (not set), (data not available)</div>{% endif %}
         <table class="table"><thead><tr><th>Source / Medium</th><th style="text-align:right;">Sessions</th></tr></thead><tbody>
           {% for r in w.source_medium %}<tr><td>{{ r.key }}</td><td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(r.sessions) }}</td></tr>{% endfor %}
           {% if not w.source_medium %}<tr><td colspan="2" style="color:var(--gray-400);">No data</td></tr>{% endif %}

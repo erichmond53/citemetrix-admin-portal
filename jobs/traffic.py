@@ -21,6 +21,33 @@ BRAND_RE = "(?i)cite ?metrix"
 
 out = {"generated": datetime.datetime.now().isoformat(timespec="seconds"), "ga4": {}, "gsc": {}, "notes": []}
 
+# CITEMETRIX-CODE-KICKOFF-MEASUREMENT-2026-09-09.md §3 /
+# CITEMETRIX-UTM-TAGGING-STANDARD-2026-09-09.md normalization map. Folds
+# referrer-hostname and shortener variants of the same platform into one
+# channel row, applied here at read time over an already-fetched GA4
+# report -- this never rewrites GA4 itself. Same channel vocabulary as
+# the WP plugin's CiteMetrix_Content_Engine::COMPANION_RECIPES utm_source
+# values; there's no shared runtime between this Flask app and the WP
+# plugin to import a single registry from, so keep both lists in sync by
+# hand if a channel is added on either side.
+CHANNEL_NORMALIZATION_MAP = {
+    "fb": "facebook", "m.facebook.com": "facebook", "lm.facebook.com": "facebook",
+    "l.facebook.com": "facebook", "facebook.com": "facebook",
+    "ig": "instagram", "instagram.com": "instagram",
+    "lnkd.in": "linkedin", "linkedin.com": "linkedin",
+    "t.co": "x", "twitter": "x", "twitter.com": "x", "x.com": "x",
+    "sendy": "email", "drip": "email", "mailer": "email",
+    "reddit.com": "reddit", "old.reddit.com": "reddit",
+    "threads.net": "threads",
+    "youtu.be": "youtube",
+}
+
+# Legacy-unattributed source labels. Left exactly as GA4 reports them --
+# never merged into each other or renamed -- but their combined share of
+# sessions is surfaced as its own number: its decline over time is the
+# measure of whether UTM tagging is actually being adopted.
+UNATTRIBUTED_SOURCES = {"(direct)", "(not set)", "(data not available)"}
+
 # ─────────────────────────── GA4 ───────────────────────────
 try:
     from google.oauth2 import service_account
@@ -54,6 +81,34 @@ try:
         rows.sort(key=lambda x: x["sessions"], reverse=True)
         return rows[:n]
 
+    def top_source_medium(days, n):
+        """Like top('sessionSourceMedium', ...), but folds referrer/shortener
+        variants into one row per channel (CHANNEL_NORMALIZATION_MAP) before
+        truncating to the top n -- so a long-tail variant of a channel that's
+        big in aggregate isn't dropped just because no single variant made
+        the raw top n on its own. Rows outside the map (google/organic,
+        google/cpc, etc.) pass through with their original source/medium
+        pairing intact; only the listed variants collapse."""
+        raw = [{"key": (r.dimension_values[0].value or "(none)"), "sessions": int(r.metric_values[0].value)}
+               for r in run(["sessionSourceMedium"], ["sessions"], days)]
+        total = sum(r["sessions"] for r in raw)
+        unattributed = 0
+        merged = {}
+        for r in raw:
+            key, sessions = r["key"], r["sessions"]
+            source = (key.split(" / ", 1)[0] if " / " in key else key).strip().lower()
+            if source in UNATTRIBUTED_SOURCES:
+                unattributed += sessions
+                merged[key] = merged.get(key, 0) + sessions
+                continue
+            channel = CHANNEL_NORMALIZATION_MAP.get(source)
+            merge_key = channel if channel else key
+            merged[merge_key] = merged.get(merge_key, 0) + sessions
+        rows = sorted(({"key": k, "sessions": v} for k, v in merged.items()),
+                       key=lambda x: x["sessions"], reverse=True)
+        unattributed_share = round(unattributed / total * 100, 1) if total else 0.0
+        return rows[:n], unattributed_share
+
     def window(days):
         w = {}
         t = run([], ["sessions", "engagedSessions", "activeUsers", "averageSessionDuration", "engagementRate"], days)
@@ -64,7 +119,7 @@ try:
                            "engagement_rate": round(float(mv[4].value) * 100, 1)}
         else:
             w["totals"] = {"sessions": 0, "engaged": 0, "users": 0, "avg_duration": 0, "engagement_rate": 0}
-        w["source_medium"] = top("sessionSourceMedium", days, 15, "key")
+        w["source_medium"], w["unattributed_share"] = top_source_medium(days, 15)
         w["landing_pages"] = top("landingPagePlusQueryString", days, 20, "page")
         w["campaigns"]     = top("sessionCampaignName", days, 15, "campaign")
         w["devices"]       = {r.dimension_values[0].value: int(r.metric_values[0].value)
