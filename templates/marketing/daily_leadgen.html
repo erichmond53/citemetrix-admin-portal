@@ -89,7 +89,7 @@
     <div style="overflow-x:auto;">
       <table class="table">
         <thead><tr>
-          <th>Source</th><th>Platform</th><th>Title</th><th style="text-align:right;">Sessions</th>
+          <th>Source</th><th>Platform</th><th>Title</th><th>Citation rate</th><th style="text-align:right;">Sessions</th>
           <th style="text-align:right;">Scans</th><th style="text-align:right;">Leads</th>
         </tr></thead>
         <tbody>
@@ -97,13 +97,22 @@
           <tr>
             <td><span style="font-size:11px;padding:2px 8px;border-radius:10px;{{ 'background:rgba(79,70,229,.1);color:var(--primary);' if p.source_type == 'engine' else 'background:var(--gray-100);color:var(--gray-600);' }}">{{ 'Engine' if p.source_type == 'engine' else 'Manual' }}</span></td>
             <td>{{ p.platform }}</td>
-            <td style="max-width:300px;">{% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.title }}</a>{% else %}{{ p.title }}{% endif %}</td>
+            <td style="max-width:340px;">
+              {% if p.url %}<a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.title }}</a>{% else %}{{ p.title }}{% endif %}
+              {% if p.sentence %}<div style="font-size:11px;color:var(--gray-500);margin-top:2px;line-height:1.4;">{{ p.sentence }}</div>{% endif %}
+            </td>
+            <td style="white-space:nowrap;">
+              {% if p.current_rate is defined %}{{ p.rate_at_publish }}% &rarr; {{ p.current_rate }}%
+                <span style="font-weight:600;color:{{ 'var(--success, #10b981)' if p.rate_delta >= 0 else 'var(--danger, #ef4444)' }};">({{ '+' if p.rate_delta >= 0 else '' }}{{ p.rate_delta }}pp)</span>
+                {% if p.rate_confidence == 'low' %}<span style="font-size:10px;color:var(--gray-400);"> thin data</span>{% endif %}
+              {% else %}<span style="color:var(--gray-400);">—</span>{% endif %}
+            </td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ p.sessions }}</td>
             <td style="text-align:right;">{{ p.scans }}</td>
             <td style="text-align:right;font-weight:600;">{{ p.leads }}</td>
           </tr>
         {% endfor %}
-        {% if not pd.posts %}<tr><td colspan="6" style="color:var(--gray-400);">No tracked-post sessions in this window yet — this fills in as Companions get published and Publication Log entries get logged.</td></tr>{% endif %}
+        {% if not pd.posts %}<tr><td colspan="7" style="color:var(--gray-400);">No tracked-post sessions in this window yet — this fills in as Companions get published and Publication Log entries get logged.</td></tr>{% endif %}
         </tbody>
       </table>
     </div>

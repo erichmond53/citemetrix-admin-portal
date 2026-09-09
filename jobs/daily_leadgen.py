@@ -112,21 +112,53 @@ def _utm_content(url):
     return m.group(1) if m else None
 
 
+def compute_30day_citation_rate(cur, domain_id, keyword_id):
+    """Same formula as CiteMetrix_Content_Engine::compute_30day_citation_rate()
+    in the WP plugin, so this number always matches what the Companion Impact
+    card already shows there -- this isn't a second computation of the same
+    fact, it's the same fact, joined onto Loop B's session data."""
+    thirty_days_ago = (today - datetime.timedelta(days=30)).isoformat()
+    cur.execute("""SELECT COUNT(*) total_checks, SUM(CASE WHEN is_cited=1 THEN 1 ELSE 0 END) times_cited
+                   FROM wp_citemetrix_citations WHERE domain_id=%s AND keyword_id=%s AND checked_at >= %s""",
+                (domain_id, keyword_id, thirty_days_ago))
+    row = cur.fetchone()
+    if not row or not row["total_checks"]:
+        return None, 0
+    return round(100.0 * row["times_cited"] / row["total_checks"], 2), int(row["total_checks"])
+
+
 content_lookup = {}
 try:
     conn = pymysql.connect(host=os.getenv("DB_HOST"), user=os.getenv("DB_USER"),
                             password=os.getenv("DB_PASSWORD"), database=os.getenv("DB_NAME"),
                             charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor)
     with conn.cursor() as cur:
-        cur.execute("""SELECT c.tracked_url, c.channel, c.title, c.published_url, g.topic
+        cur.execute("""SELECT c.tracked_url, c.channel, c.title, c.published_url, c.status,
+                              c.rate_at_publish, c.domain_id, g.topic, g.keyword_id
                        FROM wp_citemetrix_ce_companions c
                        JOIN wp_citemetrix_ce_generations g ON g.id = c.generation_id
                        WHERE c.tracked_url IS NOT NULL""")
         for r in cur.fetchall():
             cid = _utm_content(r["tracked_url"])
-            if cid:
-                content_lookup[cid] = {"title": r["title"] or r["topic"], "platform": r["channel"],
-                                        "url": r["published_url"], "source_type": "engine"}
+            if not cid:
+                continue
+            entry = {"title": r["title"] or r["topic"], "platform": r["channel"],
+                     "url": r["published_url"], "source_type": "engine"}
+            # Loop A <-> Loop B join (measurement-architecture.md §1/§9 step 6):
+            # only tell the citation-rate story where the WP plugin's own gate
+            # would -- published, with a captured baseline. Everything else
+            # (drafts, approved-but-unpublished, no baseline yet) still gets a
+            # Loop B (traffic) row, just without a citation-rate claim bolted on.
+            if r["status"] == "published" and r["rate_at_publish"] is not None:
+                current_rate, checks = compute_30day_citation_rate(cur, r["domain_id"], r["keyword_id"])
+                if current_rate is not None:
+                    baseline = float(r["rate_at_publish"])
+                    delta = round(current_rate - baseline, 1)
+                    entry.update({
+                        "rate_at_publish": baseline, "current_rate": current_rate, "rate_delta": delta,
+                        "rate_confidence": "directional" if checks >= 8 else "low", "rate_checks": checks,
+                    })
+            content_lookup[cid] = entry
     conn.close()
 except Exception as e:
     notes.append(f"product DB content lookup failed: {e}")
@@ -264,8 +296,23 @@ def assemble(period):
     posts = []
     for content_id, b in by_period_post[period].items():
         meta = content_lookup.get(content_id, {"title": content_id, "platform": "?", "url": None, "source_type": "?"})
-        posts.append({"content_id": content_id, **meta, "sessions": b["sessions"], "engaged": b["engaged"],
-                      "scans": b["scans"], "leads": b["leads"]})
+        post = {"content_id": content_id, **meta, "sessions": b["sessions"], "engaged": b["engaged"],
+                "scans": b["scans"], "leads": b["leads"]}
+        # measurement-architecture.md §1: "This LinkedIn post moved the topic's
+        # citation rate from 34% to 61%, and sent 40 sessions, 3 scans and 1
+        # lead." -- Loop A (rate_at_publish/current_rate, joined in above) and
+        # Loop B (sessions/scans/leads, this job's own numbers) rendered as one
+        # sentence, on the same companion record.
+        if post.get("current_rate") is not None:
+            arrow = f"+{post['rate_delta']}pp" if post["rate_delta"] >= 0 else f"{post['rate_delta']}pp"
+            post["sentence"] = (
+                f"Moved the topic's citation rate {post['rate_at_publish']}% → {post['current_rate']}% ({arrow}), "
+                f"and sent {post['sessions']} session{'s' if post['sessions'] != 1 else ''}, "
+                f"{post['scans']} scan{'s' if post['scans'] != 1 else ''} and "
+                f"{post['leads']} lead{'s' if post['leads'] != 1 else ''}."
+                + (" Thin data -- directional only." if post["rate_confidence"] == "low" else "")
+            )
+        posts.append(post)
     posts.sort(key=lambda p: p["sessions"], reverse=True)
     return {"rows": rows, "posts": posts, "direct_share": direct_share.get(period, 0.0)}
 
