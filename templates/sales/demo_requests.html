@@ -14,7 +14,7 @@
 <div class="card" style="padding:0;overflow:hidden;">
   <div style="overflow-x:auto;">
   <table class="table">
-    <thead><tr><th>Demo Time</th><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Booked On</th></tr></thead>
+    <thead><tr><th>Demo Time</th><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Assigned To</th><th>Outcome</th><th>Booked On</th></tr></thead>
     <tbody>
       {% for r in rows %}
       <tr {% if r.start_date and r.start_date > now %}style="background:#f5f7ff;"{% endif %}>
@@ -29,15 +29,35 @@
           {% set st = r.status or 'unknown' %}
           <span class="badge {{ 'badge-success' if st == 'approved' else ('badge-warning' if st == 'pending' else ('badge-danger' if st in ['cancelled','rejected'] else '')) }}" style="text-transform:capitalize;">{{ st }}</span>
         </td>
+        <td>
+          <form method="post" action="{{ url_for('sales_demo_outcome', bookly_id=r.id) }}" style="display:flex;gap:4px;align-items:center;">
+            <select name="assigned_to" onchange="this.form.submit()" style="font-size:12px;padding:3px 4px;border:1px solid var(--gray-200);border-radius:6px;">
+              <option value="">&mdash; unassigned &mdash;</option>
+              {% for u in users %}
+              <option value="{{ u.id }}" {% if r.outcome_row and r.outcome_row.assigned_to == u.id %}selected{% endif %}>{{ u.name }}</option>
+              {% endfor %}
+            </select>
+            <input type="hidden" name="outcome" value="{{ r.outcome_row.outcome if r.outcome_row else 'pending' }}">
+          </form>
+        </td>
+        <td>
+          <form method="post" action="{{ url_for('sales_demo_outcome', bookly_id=r.id) }}" style="display:flex;gap:4px;align-items:center;">
+            <input type="hidden" name="assigned_to" value="{{ r.outcome_row.assigned_to if r.outcome_row and r.outcome_row.assigned_to else '' }}">
+            <select name="outcome" onchange="this.form.submit()" style="font-size:12px;padding:3px 4px;border:1px solid var(--gray-200);border-radius:6px;">
+              {% set cur_outcome = r.outcome_row.outcome if r.outcome_row else 'pending' %}
+              {% for opt in ['pending','held','no_show','converted','lost'] %}
+              <option value="{{ opt }}" {% if cur_outcome == opt %}selected{% endif %}>{{ opt|replace('_',' ')|title }}</option>
+              {% endfor %}
+            </select>
+          </form>
+        </td>
         <td style="white-space:nowrap;color:var(--gray-500);font-size:13px;">{{ r.booked_at.strftime('%Y-%m-%d') if r.booked_at else '&mdash;'|safe }}</td>
       </tr>
-      {% if r.notes %}<tr><td></td><td colspan="5" style="color:var(--gray-500);font-size:13px;padding-top:0;">&#9432; {{ r.notes }}</td></tr>{% endif %}
+      {% if r.notes %}<tr><td></td><td colspan="7" style="color:var(--gray-500);font-size:13px;padding-top:0;">&#9432; {{ r.notes }}</td></tr>{% endif %}
       {% endfor %}
-      {% if not rows %}<tr><td colspan="6" style="color:var(--gray-400);padding:24px;">No demo bookings yet.</td></tr>{% endif %}
+      {% if not rows %}<tr><td colspan="8" style="color:var(--gray-400);padding:24px;">No demo bookings yet.</td></tr>{% endif %}
     </tbody>
   </table>
   </div>
 </div>
-<p style="color:var(--gray-400);font-size:12px;margin-top:12px;">Bookings come from the Bookly form on /book-demo/. Cancellations &amp; approvals are managed in WordPress (Bookly) for now.</p>
-
 {% endblock %}

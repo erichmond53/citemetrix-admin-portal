@@ -82,6 +82,11 @@
         .ldp-row .k { color:var(--gray-500); }
         .ldp-empty { color:var(--gray-400); font-size:13px; }
         .ldp-platform { display:flex; justify-content:space-between; align-items:center; padding:6px 0; font-size:13px; border-bottom:1px solid var(--gray-100); }
+        .ldp-platform-block { padding:8px 0; border-bottom:1px solid var(--gray-100); }
+        .ldp-platform-block .ldp-platform { border-bottom:none; padding:0 0 4px; cursor:pointer; }
+        .ldp-platform-response { display:none; font-size:12px; color:var(--gray-600); background:var(--gray-50); border-radius:6px; padding:8px 10px; margin-top:2px; white-space:pre-wrap; max-height:220px; overflow-y:auto; }
+        .ldp-platform-response.open { display:block; }
+        .ldp-sentiment { font-size:11px; color:var(--gray-400); text-transform:capitalize; margin-left:8px; }
         .ldp-timeline-item { padding:8px 0; border-bottom:1px solid var(--gray-100); font-size:13px; }
         .ldp-timeline-item .t { color:var(--gray-400); font-size:12px; }
         .ldp-actions { padding:16px 24px; border-top:1px solid var(--gray-200); display:flex; flex-wrap:wrap; gap:8px; }
@@ -101,8 +106,16 @@
             {% set role = (current_user.role if current_user.is_authenticated else '') %}
 
             {# Dashboard — always visible, not collapsible #}
-            <div class="nav-section" style="margin-bottom:10px;">
-                <a href="/" class="nav-link {% if ep == 'dashboard' %}active{% endif %}"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>Dashboard</a>
+            {% set dash = ep in ['dashboard', 'dashboard_marketing', 'dashboard_cs', 'dashboard_sales', 'dashboard_systems'] %}
+            <div class="nav-section {% if dash %}open{% endif %}" style="margin-bottom:10px;">
+                <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#128202;</span><span>Dashboard</span><span class="nav-chevron">&#9662;</span></a>
+                <div class="nav-section-items">
+                    <a href="/" class="nav-link {% if ep == 'dashboard' %}active{% endif %}">Overview</a>
+                    <a href="/dashboard/marketing" class="nav-link {% if ep == 'dashboard_marketing' %}active{% endif %}">Marketing Alerts</a>
+                    <a href="/dashboard/cs" class="nav-link {% if ep == 'dashboard_cs' %}active{% endif %}">CS Alerts</a>
+                    <a href="/dashboard/sales" class="nav-link {% if ep == 'dashboard_sales' %}active{% endif %}">Sales Alerts</a>
+                    <a href="/dashboard/systems" class="nav-link {% if ep == 'dashboard_systems' %}active{% endif %}">Systems Alerts</a>
+                </div>
             </div>
 
             {# Marketing -- step1brief.md SS17: 9 pages regrouped under 4 items
@@ -140,11 +153,11 @@
                now one tabbed page (see _measure_tabs.html) -- one sidebar entry,
                not four, matching the in-page tab bar. Nurture stays separate until
                it folds into Sequences post-drain (step 5). #}
-            {% set nav_measure = ep in ['campaign_effectiveness', 'marketing', 'campaign_effectiveness_redirect', 'marketing_traffic', 'marketing_traffic_redirect', 'marketing_traffic_refresh', 'gsc_weekly', 'marketing_deliverability', 'marketing_deliverability_redirect', 'marketing_deliverability_refresh', 'marketing_survey', 'marketing_survey_redirect', 'marketing_nurture'] %}
+            {% set nav_measure = ep in ['campaign_effectiveness', 'marketing', 'campaign_effectiveness_redirect', 'marketing_traffic', 'marketing_traffic_redirect', 'marketing_traffic_refresh', 'gsc_weekly', 'measure_publications', 'publications_save', 'measure_daily_leadgen', 'daily_leadgen_refresh', 'daily_leadgen_refresh_status', 'marketing_deliverability', 'marketing_deliverability_redirect', 'marketing_deliverability_refresh', 'marketing_survey', 'marketing_survey_redirect', 'marketing_nurture'] %}
             <div class="nav-section {% if nav_measure %}open{% endif %}">
                 <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#128202;</span><span>Measure</span><span class="nav-chevron">&#9662;</span></a>
                 <div class="nav-section-items">
-                    <a href="/marketing/measure/effectiveness" class="nav-link {% if ep in ['campaign_effectiveness', 'marketing', 'campaign_effectiveness_redirect', 'marketing_traffic', 'marketing_traffic_redirect', 'marketing_traffic_refresh', 'gsc_weekly', 'marketing_deliverability', 'marketing_deliverability_redirect', 'marketing_deliverability_refresh', 'marketing_survey', 'marketing_survey_redirect'] %}active{% endif %}">Measure</a>
+                    <a href="/marketing/measure/effectiveness" class="nav-link {% if ep in ['campaign_effectiveness', 'marketing', 'campaign_effectiveness_redirect', 'marketing_traffic', 'marketing_traffic_redirect', 'marketing_traffic_refresh', 'gsc_weekly', 'measure_publications', 'publications_save', 'measure_daily_leadgen', 'daily_leadgen_refresh', 'daily_leadgen_refresh_status', 'marketing_deliverability', 'marketing_deliverability_redirect', 'marketing_deliverability_refresh', 'marketing_survey', 'marketing_survey_redirect'] %}active{% endif %}">Measure</a>
                     <a href="/marketing/nurture" class="nav-link {% if ep == 'marketing_nurture' %}active{% endif %}">Nurture</a>
                 </div>
             </div>
@@ -181,12 +194,13 @@
 
             {# Operations #}
             {% if role in ['admin', 'operations'] %}
-            {% set op = ep in ['operations', 'audit_log', 'operations_api_status'] %}
+            {% set op = ep in ['operations', 'audit_log', 'operations_api_status', 'operations_aws_pipeline'] %}
             <div class="nav-section {% if op %}open{% endif %}">
                 <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#9881;&#65039;</span><span>Operations</span><span class="nav-chevron">&#9662;</span></a>
                 <div class="nav-section-items">
                     <a href="/operations" class="nav-link {% if ep == 'operations' %}active{% endif %}">Product Jobs</a>
                     <a href="/operations/api-status" class="nav-link {% if ep == 'operations_api_status' %}active{% endif %}">AI Platform APIs</a>
+                    <a href="/operations/aws-pipeline" class="nav-link {% if ep == 'operations_aws_pipeline' %}active{% endif %}">AWS Pipeline Health</a>
                     {% if role == 'admin' %}<a href="/audit" class="nav-link {% if ep == 'audit_log' %}active{% endif %}">Customer Activity Log</a>{% endif %}
                 </div>
             </div>
@@ -341,10 +355,65 @@
             if (l.suppressed_at) state += `<div class="ldp-row"><span class="k">Suppressed</span><span>${ldpEsc(l.suppression_reason || 'yes')} &middot; ${ldpFmtDate(l.suppressed_at)}</span></div>`;
             (d.enrollments || []).forEach(e => {
                 state += `<div class="ldp-row"><span class="k">${ldpEsc(e.campaign_name)}</span><span style="text-transform:capitalize;">${ldpEsc(e.status)} (step ${e.current_step})</span></div>`;
+                if (e.block_reason) {
+                    state += `<div class="ldp-row"><span class="k"></span><span style="color:#991B1B;font-size:12px;">${ldpEsc(e.block_reason)}</span></div>`;
+                }
             });
             if (l.dup_status === 'possible_dup') {
                 const sibs = (d.dup_siblings || []).map(s => s.email || ((s.first_name || '') + ' ' + (s.last_name || '')).trim() || ('#' + s.id)).map(ldpEsc).join(', ');
                 state += `<div class="ldp-row"><span class="k">Possible duplicate</span><span>${sibs || 'shares an email with another lead'}</span></div>`;
+            }
+
+            let scanReport = '';
+            let ldpRespCounter = 0;
+            function ldpPlatformBlock(p) {
+                ldpRespCounter += 1;
+                const rid = 'ldp-resp-' + ldpRespCounter;
+                const hasResponse = !!(p.response && p.response.trim());
+                const toggle = hasResponse ? ` onclick=\"ldpToggleResponse('${rid}')\"` : '';
+                const verdict = (p.mentioned === null || p.mentioned === undefined)
+                    ? '' : `<span style=\"font-weight:600;color:${p.mentioned ? 'var(--success)' : 'var(--danger)'};\">${p.mentioned ? 'Mentioned' : 'Not mentioned'}</span>`;
+                return `<div class=\"ldp-platform-block\">` +
+                    `<div class=\"ldp-platform\"${toggle}><span>${ldpEsc(p.platform)}${p.sentiment ? `<span class=\"ldp-sentiment\">${ldpEsc(p.sentiment)}</span>` : ''}</span>` +
+                    `<span>${verdict}${hasResponse ? ' &#9662;' : ''}</span></div>` +
+                    (hasResponse ? `<div class=\"ldp-platform-response\" id=\"${rid}\">${ldpEsc(p.response)}</div>` : '') +
+                    `</div>`;
+            }
+            if (d.score_report) {
+                const sr = d.score_report;
+                scanReport += `<div class=\"ldp-row\"><span class=\"k\">Brand / domain</span><span>${ldpEsc(sr.brand_name || '—')} &middot; ${ldpEsc(sr.domain || '—')}</span></div>`;
+                scanReport += `<div class=\"ldp-row\"><span class=\"k\">ModelScore</span><span>${(sr.model_score === null || sr.model_score === undefined) ? '—' : sr.model_score}</span></div>`;
+                scanReport += `<div class=\"ldp-row\"><span class=\"k\">Checked</span><span>${ldpFmtDate(sr.created_at)}</span></div>`;
+
+                // The gap that actually sells a follow-up: does this brand show up when
+                // someone asks AI for the category with no brand name in the prompt, and if
+                // not, who does. appeared_on/absent_on/competitors are computed from exactly
+                // that category-level query -- category_visibility/model_score reflect it,
+                // brand_recognition (the OTHER number) does not.
+                if (sr.category_query) {
+                    scanReport += `<div style=\"margin-top:14px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);\">Category search: \"${ldpEsc(sr.category_query)}\"</div>`;
+                    const gapLine = (sr.absent_on && sr.absent_on.length)
+                        ? `<span style=\"color:var(--danger);font-weight:600;\">Not recommended</span> on ${ldpEsc(sr.absent_on.join(', '))}`
+                        : `<span style=\"color:var(--success);font-weight:600;\">Recommended</span> on every platform checked`;
+                    scanReport += `<div class=\"ldp-row\"><span class=\"k\">Result</span><span>${gapLine}</span></div>`;
+                    if (sr.competitors && sr.competitors.length) {
+                        scanReport += `<div class=\"ldp-row\"><span class=\"k\">AI recommends instead</span><span>${ldpEsc(sr.competitors.join(', '))}</span></div>`;
+                    }
+                    if (sr.category_platforms && sr.category_platforms.length) {
+                        scanReport += '<div style=\"margin-top:8px;\">' + sr.category_platforms.map(ldpPlatformBlock).join('') + '</div>';
+                    }
+                }
+
+                if (sr.brand_platforms && sr.brand_platforms.length) {
+                    scanReport += `<div style=\"margin-top:14px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-400);\">Direct brand recognition</div>`;
+                    scanReport += '<div>' + sr.brand_platforms.map(ldpPlatformBlock).join('') + '</div>';
+                }
+
+                if (!sr.category_query && !(sr.brand_platforms && sr.brand_platforms.length)) {
+                    scanReport += '<p class=\"ldp-empty\">Scan completed, but no platform-level results were stored.</p>';
+                }
+            } else {
+                scanReport = '<p class=\"ldp-empty\">No completed score check on file for this email yet.</p>';
             }
 
             let timeline = (d.timeline || []).map(t =>
@@ -355,6 +424,7 @@
             document.getElementById('ldp-body').innerHTML =
                 '<div class="ldp-section"><h3>Identity</h3>' + identity + touches + '</div>' +
                 '<div class="ldp-section"><h3>Attribution</h3>' + attribution + '</div>' +
+                '<div class="ldp-section"><h3>Scan Report</h3>' + scanReport + '</div>' +
                 '<div class="ldp-section"><h3>State</h3>' + state + '</div>' +
                 '<div class="ldp-section"><h3>Timeline</h3>' + timeline + '</div>';
 
@@ -383,6 +453,11 @@
             sel.innerHTML = '<option value="">Enroll in…</option>' + ldpCampaignsCache.map(c =>
                 `<option value="${c.id}">${ldpEsc(c.name)}${c.active ? '' : ' (paused)'}</option>`
             ).join('');
+        }
+
+        function ldpToggleResponse(id) {
+            const el = document.getElementById(id);
+            if (el) el.classList.toggle('open');
         }
 
         function ldpStatus(msg, isError) {

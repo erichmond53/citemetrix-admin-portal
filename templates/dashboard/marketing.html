@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% import '_macros.html' as macros %}
+{% block title %}Marketing Alerts{% endblock %}
+{% block page_title %}Marketing Alerts{% endblock %}
+{% block content %}
+{% include '_alert_list_style.html' %}
+
+{{ macros.alert_list(alerts, all_clear) }}
+
+{% endblock %}

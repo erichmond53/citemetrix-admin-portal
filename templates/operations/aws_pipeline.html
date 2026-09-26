@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}AWS Pipeline Health{% endblock %}
+{% block page_title %}AWS Pipeline Health{% endblock %}
+{% block content %}
+
+<p style="font-size:12px;color:var(--gray-400);margin:-8px 0 20px;">
+  Accuracy Check, Technical Check, Sentiment Analysis, and Domain Competitor Scan run on AWS Fargate
+  workers now (Wave 1/2 migration, 2026-09). The main <a href="{{ url_for('operations') }}">System Health</a>
+  page's Fast/Slow Lane cards are keyed off on-box cron hook freshness &mdash; that hook still ticks every
+  minute post-migration but no longer does real work for these four job types, so it can't tell you whether
+  they're actually running. This page reads the real job rows and live AWS state instead.
+</p>
+
+{% if d.aws_error %}
+<div class="card" style="border-left:3px solid var(--danger);margin-bottom:20px;">
+  <div class="card-title">AWS control-plane snapshot unavailable</div>
+  <p style="font-size:13px;color:var(--gray-500);">{{ d.aws_error }}</p>
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom:20px;">
+  <div class="card-title" style="margin-bottom:12px;">Per-Job-Type Health</div>
+  <div style="overflow-x:auto;">
+  <table class="table">
+    <thead><tr><th>Job Type</th><th>Status</th><th>Last Job Created</th><th>Last Completed</th><th style="text-align:right;">Rows (24h)</th></tr></thead>
+    <tbody>
+      {% for j in d.job_health %}
+      <tr>
+        <td style="font-weight:500;">{{ j.label }}</td>
+        <td>
+          {% if j.status == 'healthy' %}<span class="badge badge-success">healthy</span>
+          {% elif j.status == 'stale' %}<span class="badge badge-danger">stale &mdash; {{ j.age_hours }}h since last job</span>
+          {% else %}<span class="badge badge-warning">no data</span>{% endif %}
+        </td>
+        <td style="color:var(--gray-600);">{{ j.last_created.strftime('%Y-%m-%d %H:%M') if j.last_created else '&mdash;' }}</td>
+        <td style="color:var(--gray-600);">{{ j.last_completed.strftime('%Y-%m-%d %H:%M') if j.last_completed else '&mdash;' }}</td>
+        <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ j.rows_24h }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="grid grid-2" style="margin-bottom:20px;">
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px;">WP-Side Circuit Breaker</div>
+    {% set cb = d.circuit_breaker %}
+    <div class="stat-card">
+      <div class="stat-label">Today's Estimated Spend</div>
+      <div class="stat-value" style="color:{{ 'var(--danger)' if cb.tripped else 'var(--gray-900)' }};">
+        {{ '$%.2f'|format(cb.today_estimate) if cb.today_estimate is not none else '&mdash;' }}
+      </div>
+      <div style="font-size:11px;color:var(--gray-400);">
+        of {{ '$%.2f'|format(cb.threshold) if cb.threshold is not none else 'unknown' }} threshold
+        {% if cb.enabled is sameas false %} &mdash; breaker disabled{% endif %}
+      </div>
+    </div>
+    <p style="font-size:11px;color:var(--gray-400);margin-top:10px;">
+      {% if cb.tripped %}<span class="badge badge-danger">TRIPPED</span> &mdash; AI calls are currently halted account-wide.
+      {% elif cb.tripped is sameas false %}<span class="badge badge-success">OK</span> &mdash; not tripped.
+      {% else %}Status unknown &mdash; could not read <code>citemetrix_spend_monitor</code>.{% endif %}
+    </p>
+  </div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px;">EventBridge Schedules</div>
+    <div style="overflow-x:auto;max-height:220px;overflow-y:auto;">
+    <table class="table">
+      <thead><tr><th>Name</th><th>State</th></tr></thead>
+      <tbody>
+        {% for s in (d.aws.schedules if d.aws else []) %}
+        <tr><td style="font-family:monospace;font-size:12px;">{{ s.name }}</td>
+            <td><span class="badge {{ 'badge-success' if s.state == 'ENABLED' else 'badge-danger' }}">{{ s.state }}</span></td></tr>
+        {% endfor %}
+        {% for r in (d.aws.rules if d.aws else []) %}
+        <tr><td style="font-family:monospace;font-size:12px;">{{ r.name }} <span style="color:var(--gray-400);">(rule)</span></td>
+            <td><span class="badge {{ 'badge-success' if r.state == 'ENABLED' else 'badge-danger' }}">{{ r.state }}</span></td></tr>
+        {% endfor %}
+        {% if not d.aws %}<tr><td colspan="2" style="color:var(--gray-400);">No data.</td></tr>{% endif %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px;">ECS Fargate Services</div>
+    <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr><th>Service</th><th style="text-align:right;">Desired</th><th style="text-align:right;">Running</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for s in (d.aws.ecs_services if d.aws and not d.aws.ecs_services_error else []) %}
+        <tr>
+          <td style="font-family:monospace;font-size:12px;">{{ s.name }}</td>
+          <td style="text-align:right;">{{ s.desired }}</td>
+          <td style="text-align:right;color:{{ 'var(--success)' if s.running == s.desired else 'var(--danger)' }};font-weight:600;">{{ s.running }}</td>
+          <td><span class="badge {{ 'badge-success' if s.status == 'ACTIVE' else 'badge-danger' }}">{{ s.status }}</span></td>
+        </tr>
+        {% endfor %}
+        {% if d.aws and d.aws.ecs_services_error %}<tr><td colspan="4" style="color:var(--danger);">{{ d.aws.ecs_services_error }}</td></tr>{% endif %}
+        {% if not d.aws %}<tr><td colspan="4" style="color:var(--gray-400);">No data.</td></tr>{% endif %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title" style="margin-bottom:12px;">SQS Queue Depth</div>
+    <div style="overflow-x:auto;max-height:400px;overflow-y:auto;">
+    <table class="table">
+      <thead><tr><th>Queue</th><th style="text-align:right;">Visible</th><th style="text-align:right;">In-Flight</th></tr></thead>
+      <tbody>
+        {% for q in (d.aws.sqs_queues if d.aws and not d.aws.sqs_queues_error else []) %}
+        <tr>
+          <td style="font-family:monospace;font-size:12px;">{{ q.name }}{% if q.name.endswith('-dlq') %} <span class="badge badge-warning" style="font-size:10px;">DLQ</span>{% endif %}</td>
+          {% if q.error %}
+          <td colspan="2" style="color:var(--danger);">{{ q.error }}</td>
+          {% else %}
+          <td style="text-align:right;color:{{ 'var(--danger)' if (q.name.endswith('-dlq') and q.visible > 0) else 'var(--gray-900)' }};font-weight:{{ '600' if q.visible > 0 else '400' }};">{{ q.visible }}</td>
+          <td style="text-align:right;color:var(--gray-500);">{{ q.in_flight }}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+        {% if d.aws and d.aws.sqs_queues_error %}<tr><td colspan="3" style="color:var(--danger);">{{ d.aws.sqs_queues_error }}</td></tr>{% endif %}
+        {% if not d.aws %}<tr><td colspan="3" style="color:var(--gray-400);">No data.</td></tr>{% endif %}
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size:11px;color:var(--gray-400);margin-top:10px;">A non-zero DLQ count means messages failed processing repeatedly and were dead-lettered &mdash; worth investigating.</p>
+  </div>
+</div>
+
+{% if d.aws and d.aws.generated_at %}
+<p style="font-size:11px;color:var(--gray-400);margin-top:16px;">AWS snapshot generated {{ d.aws.generated_at }}.</p>
+{% endif %}
+
+{% endblock %}

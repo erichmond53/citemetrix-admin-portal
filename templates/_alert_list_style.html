@@ -1,0 +1,29 @@
+{# Shared style for the alert_list() macro (_macros.html). Included (not a
+   shared stylesheet -- matches this app's existing per-template <style>
+   convention) by every page that renders alert_list(). #}
+<style>
+  .al-section { background:#fff; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.1); overflow:hidden; margin-bottom:24px; }
+  .al-row { display:flex; align-items:flex-start; gap:12px; padding:12px 20px; border-bottom:1px solid var(--gray-100); text-decoration:none; color:inherit; }
+  .al-row:last-child { border-bottom:none; }
+  .al-row:hover { background:var(--gray-50); }
+  .al-badge { flex-shrink:0; margin-top:1px; }
+  .al-domain { font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--gray-400); font-weight:700; }
+  .al-problem { font-weight:500; color:var(--gray-800); font-size:13px; }
+  .al-detail { font-size:12px; color:var(--gray-500); margin-top:2px; }
+  .al-link { flex-shrink:0; font-size:12px; color:var(--primary); font-weight:500; white-space:nowrap; margin-top:2px; }
+  .al-allclear { text-align:center; padding:40px; color:var(--gray-400); font-size:14px; background:#fff; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.1); margin-bottom:24px; }
+  .tile { text-decoration:none; color:inherit; display:block; transition:box-shadow .15s, transform .15s; }
+  .tile:hover { box-shadow:0 4px 14px rgba(0,0,0,0.10); transform:translateY(-1px); }
+  .tile .stat-card { height:100%; }
+  .tile-sub { font-size:12px; color:var(--gray-500); margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dash-stats-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--gray-400); margin-bottom:10px; }
+  .wq-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 20px; border-bottom:1px solid var(--gray-100); font-size:13px; text-decoration:none; color:inherit; }
+  .wq-row:last-of-type { border-bottom:none; }
+  .wq-row:hover { background:var(--gray-50); }
+  .wq-row .wq-main { font-weight:500; color:var(--gray-800); }
+  .wq-row .wq-sub { color:var(--gray-500); font-size:12px; white-space:nowrap; text-align:right; }
+  .wq-header { display:flex; align-items:center; justify-content:space-between; padding:14px 20px; border-bottom:1px solid var(--gray-100); }
+  .wq-title { font-size:14px; font-weight:600; color:var(--gray-800); }
+  .wq-badge { background:var(--danger); color:#fff; border-radius:10px; padding:1px 9px; font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .wq-empty { padding:14px 20px; color:var(--gray-400); font-size:13px; }
+</style>

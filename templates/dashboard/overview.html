@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import '_macros.html' as macros %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block content %}
+{% include '_alert_list_style.html' %}
+
+<div class="grid grid-4" style="margin-bottom:24px;">
+  <a class="tile" href="{{ url_for('dashboard_marketing') }}"><div class="stat-card"><div class="stat-label">Marketing</div><div class="stat-value" style="color:{{ 'var(--danger)' if counts.marketing else 'var(--success)' }};">{{ counts.marketing }}</div></div></a>
+  <a class="tile" href="{{ url_for('dashboard_cs') }}"><div class="stat-card"><div class="stat-label">CS</div><div class="stat-value" style="color:{{ 'var(--danger)' if counts.cs else 'var(--success)' }};">{{ counts.cs }}</div></div></a>
+  <a class="tile" href="{{ url_for('dashboard_sales') }}"><div class="stat-card"><div class="stat-label">Sales</div><div class="stat-value" style="color:{{ 'var(--danger)' if counts.sales else 'var(--success)' }};">{{ counts.sales }}</div></div></a>
+  <a class="tile" href="{{ url_for('dashboard_systems') }}"><div class="stat-card"><div class="stat-label">Systems</div><div class="stat-value" style="color:{{ 'var(--danger)' if counts.systems else 'var(--success)' }};">{{ counts.systems }}</div></div></a>
+</div>
+
+{{ macros.alert_list(alerts, all_clear, show_domain=true) }}
+
+<div class="dash-stats-label">At a glance</div>
+<div class="grid grid-4">
+  <a class="tile" href="/customers"><div class="stat-card"><div class="stat-label">Active Subscribers</div><div class="stat-value">{{ '{:,}'.format(m.subscribers) }}</div><div class="tile-sub">accounts on a paid tier</div></div></a>
+  <a class="tile" href="/revenue"><div class="stat-card"><div class="stat-label">MRR</div><div class="stat-value">${{ '{:,.0f}'.format(m.mrr) }}</div><div class="tile-sub">active subscriptions</div></div></a>
+  <a class="tile" href="/marketing/leads"><div class="stat-card"><div class="stat-label">New Leads (7d)</div><div class="stat-value">{{ '{:,}'.format(m.leads_7d) }}</div><div class="tile-sub">unified pool, every path</div></div></a>
+  <a class="tile" href="/operations/api-status"><div class="stat-card"><div class="stat-label">Scans Today</div><div class="stat-value">{{ '{:,}'.format(m.scans_today) }}</div><div class="tile-sub">scan runs started today</div></div></a>
+</div>
+{% endblock %}

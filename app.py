@@ -321,26 +321,369 @@ def _check_stale_jobs():
     return stale
 
 
+# CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS5: CRON_STALENESS_CHECKS above only
+# catches a job that stops running -- exactly the shape of gap that let the warm-nurture
+# interlock bug run silently for over a month, because drip_cron.py and migrate_step1b.py
+# never stopped running; they ran hourly, successfully, while quietly rejecting real leads.
+# cron_run_log (written by both jobs every run, see their own _log_run/summary blocks)
+# carries a total_problem count precisely so a job that's ALIVE but WRONG shows up here too.
+JOB_ANOMALY_LINKS = {
+    'drip_cron': {'name': 'Drip campaign sends', 'link': '/marketing/drip-campaigns', 'link_label': 'Sequences'},
+    'lead_migration_sync': {'name': 'Lead migration sync', 'link': '/marketing/leads', 'link_label': 'Leads'},
+}
+
+
+def _check_job_anomalies():
+    anomalies = []
+    try:
+        ac = get_admin_db()
+        with ac.cursor() as cur:
+            for job_name, meta in JOB_ANOMALY_LINKS.items():
+                cur.execute(
+                    "SELECT total_processed, total_problem, detail_json, run_at FROM cron_run_log "
+                    "WHERE job_name=%s ORDER BY run_at DESC LIMIT 1",
+                    (job_name,)
+                )
+                row = cur.fetchone()
+                if row and row['total_problem'] > 0:
+                    anomalies.append({
+                        **meta,
+                        'age_min': None,
+                        'problem_msg': f"last run: {row['total_problem']} of {row['total_processed']} flagged -- {row['run_at'].strftime('%Y-%m-%d %H:%M')}",
+                    })
+        ac.close()
+    except Exception:
+        app.logger.exception('_check_job_anomalies failed')
+    return anomalies
+
+
+
+
+# ── Unified Dashboard Alerts (Marketing / CS / Sales / Systems) ────────────
+# 2026-09-26. Common shape every _compute_*_alerts() returns, so one template
+# partial renders any of them: {severity, problem, detail, link, link_label, when}.
+# severity: 'critical' | 'warning' | 'info' -> badge color.
+
+def _read_json_report(rel_path):
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), rel_path)) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+# Which CRON_STALENESS_CHECKS entries are Marketing-domain vs. Systems-domain.
+# Only "Messaging platform health" is Systems (PWA/push infra); everything
+# else in that list is marketing ETL/sends.
+MARKETING_STALE_JOB_NAMES = {
+    'GSC weekly report', 'Campaign effectiveness', 'Traffic', 'Deliverability',
+    'Blacklist / reputation', 'Drip campaign sends', 'Lead migration sync', 'Duplicate detector',
+}
+
+
+def _stale_job_to_alert(j):
+    if j.get('age_min') is None:
+        problem = f"{j['name']}: no output found (log missing)"
+    else:
+        problem = f"{j['name']}: stopped running ({int(j['age_min'])} min since last run)"
+    return {'severity': 'warning', 'problem': problem, 'detail': None,
+            'link': j['link'], 'link_label': j['link_label'], 'when': None}
+
+
+def _anomaly_to_alert(j):
+    return {'severity': 'critical',
+            'problem': f"{j['name']}: running but flagging problems",
+            'detail': j.get('problem_msg'),
+            'link': j['link'], 'link_label': j['link_label'], 'when': None}
+
+
+def _cs_alerts_to_common_shape(cs):
+    """Map _compute_cs_alerts()'s existing shape (unchanged) into the common
+    alert shape, without touching the original function or /cs-alerts."""
+    out = []
+    if not cs or not cs.get('alerts'):
+        return out
+    for a in cs['alerts']:
+        sev = 'info' if a.get('fault') == 'user' else 'warning'
+        out.append({
+            'severity': sev,
+            'problem': a.get('problem'),
+            'detail': f"{a.get('account') or a.get('email') or ''} — {a.get('disposition', '')}".strip(' —'),
+            'link': '/cs-alerts', 'link_label': 'CS Alerts',
+            'when': a.get('when'),
+        })
+    return out
+
+
+def _compute_marketing_alerts():
+    alerts = []
+
+    try:
+        for j in _check_stale_jobs():
+            if j['name'] in MARKETING_STALE_JOB_NAMES:
+                alerts.append(_stale_job_to_alert(j))
+    except Exception:
+        app.logger.exception('_compute_marketing_alerts: stale jobs failed')
+
+    try:
+        for j in _check_job_anomalies():
+            alerts.append(_anomaly_to_alert(j))
+    except Exception:
+        app.logger.exception('_compute_marketing_alerts: job anomalies failed')
+
+    try:
+        ses = _read_json_report('reports/deliverability/ses-latest.json')
+        if ses:
+            if ses.get('notes'):
+                alerts.append({'severity': 'warning',
+                    'problem': 'Deliverability report generated with errors',
+                    'detail': '; '.join(ses['notes'])[:300],
+                    'link': '/marketing/measure/deliverability', 'link_label': 'Deliverability', 'when': None})
+            w = (ses.get('ses') or {}).get('window') or {}
+            br, cr = w.get('bounce_rate'), w.get('complaint_rate')
+            if br is not None and cr is not None and (br > 5 or cr > 0.1):
+                alerts.append({'severity': 'critical',
+                    'problem': f"SES bounce/complaint rate elevated (bounce {br}%, complaint {cr}%)",
+                    'detail': 'Suspension risk if this continues.',
+                    'link': '/marketing/measure/deliverability', 'link_label': 'Deliverability', 'when': None})
+    except Exception:
+        app.logger.exception('_compute_marketing_alerts: SES check failed')
+
+    try:
+        bl = _read_json_report('reports/blacklist/blacklist-latest.json')
+        if bl and bl.get('any_listed'):
+            names = ', '.join(f"{x.get('target', '?')}/{x.get('list', '?')}" for x in bl.get('listed', []))
+            alerts.append({'severity': 'critical',
+                'problem': f"Sending domain/IP blacklisted ({names or 'see report'})",
+                'detail': None, 'link': '/marketing/measure/deliverability', 'link_label': 'Deliverability', 'when': None})
+    except Exception:
+        app.logger.exception('_compute_marketing_alerts: blacklist check failed')
+
+    try:
+        camp = _read_json_report('reports/campaigns/campaign-effectiveness.json')
+        if camp:
+            d = camp.get('deliverability') or {}
+            status = d.get('status')
+            if status in ('critical', 'warn'):
+                alerts.append({'severity': 'critical' if status == 'critical' else 'warning',
+                    'problem': f"Campaign deliverability rollup: {status} "
+                               f"(bounce {d.get('bounce_rate')}%, complaint {d.get('complaint_rate')}%)",
+                    'detail': None, 'link': '/marketing/measure/effectiveness',
+                    'link_label': 'Campaign Effectiveness', 'when': None})
+    except Exception:
+        app.logger.exception('_compute_marketing_alerts: campaign rollup check failed')
+
+    return alerts
+
+
+def _compute_sales_alerts():
+    alerts = []
+
+    try:
+        ac = get_admin_db()
+        with ac.cursor() as cur:
+            cur.execute(
+                "SELECT firm_name, target_person, updated_at FROM outreach_thread "
+                "WHERE status='sent' AND updated_at < DATE_SUB(NOW(), INTERVAL 5 DAY) "
+                "ORDER BY updated_at ASC LIMIT 20"
+            )
+            for r in cur.fetchall():
+                alerts.append({'severity': 'warning',
+                    'problem': f"Investor thread stale: {r['firm_name']} ({r['target_person']}) — sent, no reply",
+                    'detail': f"Last updated {r['updated_at']}",
+                    'link': '/outreach', 'link_label': 'Investor Outreach', 'when': r['updated_at']})
+
+            cur.execute(
+                "SELECT t.firm_name, m.error, m.sent_at FROM outreach_message m "
+                "JOIN outreach_thread t ON t.id = m.thread_id "
+                "WHERE m.status='failed' AND m.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
+                "ORDER BY m.created_at DESC LIMIT 20"
+            )
+            for r in cur.fetchall():
+                alerts.append({'severity': 'warning',
+                    'problem': f"Investor outreach send failed: {r['firm_name']}",
+                    'detail': (r['error'] or '')[:200],
+                    'link': '/outreach', 'link_label': 'Investor Outreach', 'when': None})
+
+            cur.execute(
+                "SELECT firm_name, next_action, next_action_at FROM outreach_thread "
+                "WHERE next_action_at IS NOT NULL AND next_action_at < NOW() "
+                "ORDER BY next_action_at ASC LIMIT 20"
+            )
+            for r in cur.fetchall():
+                alerts.append({'severity': 'info',
+                    'problem': f"Investor follow-up overdue: {r['firm_name']} — {r['next_action']}",
+                    'detail': None, 'link': '/outreach', 'link_label': 'Investor Outreach',
+                    'when': r['next_action_at']})
+
+            cur.execute(
+                "SELECT id, email, first_name, last_name, company, stage_entered_at FROM leads "
+                "WHERE stage='engaged' AND excluded=0 AND stage_entered_at < DATE_SUB(NOW(), INTERVAL 5 DAY) "
+                "ORDER BY stage_entered_at ASC LIMIT 20"
+            )
+            for r in cur.fetchall():
+                who = r['company'] or f"{r['first_name'] or ''} {r['last_name'] or ''}".strip() or r['email']
+                alerts.append({'severity': 'warning',
+                    'problem': f"Lead stuck in Engaged: {who}",
+                    'detail': f"Entered {r['stage_entered_at']}",
+                    'link': '/sales/pipeline', 'link_label': 'Pipeline', 'when': r['stage_entered_at']})
+
+            import outreach
+            sent_today = outreach.real_sends_last_24h(cur)
+            if sent_today >= outreach.DAILY_SEND_CAP * 0.8:
+                alerts.append({'severity': 'info',
+                    'problem': f"Approaching daily investor-send cap ({sent_today}/{outreach.DAILY_SEND_CAP})",
+                    'detail': None, 'link': '/outreach', 'link_label': 'Investor Outreach', 'when': None})
+
+            # Demo-outcome alerts (demo_outcomes table, added 2026-09-26).
+            cur.execute(
+                "SELECT bookly_appointment_id, assigned_to, outcome FROM demo_outcomes"
+            )
+            outcomes_by_id = {r['bookly_appointment_id']: r for r in cur.fetchall()}
+        ac.close()
+    except Exception:
+        app.logger.exception('_compute_sales_alerts: admin-portal DB queries failed')
+        outcomes_by_id = {}
+
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT a.id, a.start_date, cu.full_name FROM wp_bookly_appointments a "
+                "LEFT JOIN wp_bookly_customer_appointments ca ON ca.appointment_id = a.id "
+                "LEFT JOIN wp_bookly_customers cu ON cu.id = ca.customer_id "
+                "WHERE a.start_date >= DATE_SUB(NOW(), INTERVAL 7 DAY) "
+                "ORDER BY a.start_date ASC LIMIT 50"
+            )
+            for r in cur.fetchall():
+                o = outcomes_by_id.get(r['id'])
+                is_future = r['start_date'] > datetime.now()
+                if is_future and (not o or not o.get('assigned_to')):
+                    alerts.append({'severity': 'warning',
+                        'problem': f"Demo booked, no salesperson assigned: {r['full_name'] or 'unknown'}",
+                        'detail': f"Scheduled {r['start_date']}",
+                        'link': '/sales/demo-requests', 'link_label': 'Booked Demos', 'when': r['start_date']})
+                elif not is_future and r['start_date'] < datetime.now() - timedelta(hours=2) \
+                        and (not o or o.get('outcome') == 'pending'):
+                    alerts.append({'severity': 'warning',
+                        'problem': f"Demo passed, no outcome logged: {r['full_name'] or 'unknown'}",
+                        'detail': f"Was scheduled {r['start_date']}",
+                        'link': '/sales/demo-requests', 'link_label': 'Booked Demos', 'when': r['start_date']})
+        conn.close()
+    except Exception:
+        app.logger.exception('_compute_sales_alerts: demo-outcome check failed')
+
+    return alerts
+
+
+def _compute_systems_alerts():
+    alerts = []
+
+    try:
+        aws, aws_error = _fetch_aws_health_snapshot()
+        if aws_error:
+            alerts.append({'severity': 'warning', 'problem': 'AWS control-plane snapshot unavailable',
+                'detail': aws_error, 'link': '/operations/aws-pipeline', 'link_label': 'AWS Pipeline Health', 'when': None})
+        elif aws:
+            for s in aws.get('ecs_services', []) or []:
+                if s.get('running', 0) < s.get('desired', 0):
+                    alerts.append({'severity': 'critical',
+                        'problem': f"ECS service under-capacity: {s['name']} ({s['running']}/{s['desired']} running)",
+                        'detail': None, 'link': '/operations/aws-pipeline', 'link_label': 'AWS Pipeline Health', 'when': None})
+            for q in aws.get('sqs_queues', []) or []:
+                if q.get('name', '').endswith('-dlq') and (q.get('visible') or 0) > 0:
+                    alerts.append({'severity': 'warning',
+                        'problem': f"Dead-letter queue has messages: {q['name']} ({q['visible']} visible)",
+                        'detail': None, 'link': '/operations/aws-pipeline', 'link_label': 'AWS Pipeline Health', 'when': None})
+            for s in (aws.get('schedules', []) or []) + (aws.get('rules', []) or []):
+                if s.get('state') != 'ENABLED':
+                    alerts.append({'severity': 'info',
+                        'problem': f"EventBridge schedule disabled: {s['name']}",
+                        'detail': None, 'link': '/operations/aws-pipeline', 'link_label': 'AWS Pipeline Health', 'when': None})
+    except Exception:
+        app.logger.exception('_compute_systems_alerts: AWS snapshot failed')
+
+    try:
+        conn = get_db()
+        cb = _wp_circuit_breaker_status(conn)
+        conn.close()
+        if cb.get('tripped'):
+            alerts.append({'severity': 'critical',
+                'problem': f"AI spend circuit breaker TRIPPED (${cb.get('today_estimate')} of ${cb.get('threshold')})",
+                'detail': 'AI calls are currently halted account-wide.',
+                'link': '/operations/aws-pipeline', 'link_label': 'AWS Pipeline Health', 'when': None})
+    except Exception:
+        app.logger.exception('_compute_systems_alerts: circuit breaker check failed')
+
+    try:
+        ac = get_admin_db()
+        with ac.cursor() as cur:
+            cur.execute(
+                "SELECT id, alert_type, severity, message, created_at FROM system_alerts "
+                "WHERE acknowledged_at IS NULL ORDER BY created_at DESC LIMIT 50"
+            )
+            for r in cur.fetchall():
+                sev = 'critical' if r['severity'] == 'critical' else ('warning' if r['severity'] == 'warn' else 'info')
+                alerts.append({'severity': sev, 'problem': r['message'] or r['alert_type'],
+                    'detail': None, 'link': '/operations', 'link_label': 'Product Jobs', 'when': r['created_at']})
+        ac.close()
+    except Exception:
+        app.logger.exception('_compute_systems_alerts: system_alerts read failed (table may not exist yet)')
+
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, domain_id, started_at, TIMESTAMPDIFF(MINUTE, started_at, NOW()) AS mins "
+                "FROM wp_citemetrix_scan_runs WHERE completed_at IS NULL "
+                "AND started_at < DATE_SUB(NOW(), INTERVAL 360 MINUTE) ORDER BY started_at ASC LIMIT 20"
+            )
+            for r in cur.fetchall():
+                alerts.append({'severity': 'critical',
+                    'problem': f"Scan run stuck: domain {r['domain_id']} started {int(r['mins'])} min ago, never completed",
+                    'detail': None, 'link': '/operations', 'link_label': 'Product Jobs', 'when': r['started_at']})
+
+            # NOTE: a per-platform quota/failure rollup (mirroring the V2
+            # dashboard's Panel 4) was tried here and removed 2026-09-26 --
+            # every one of the 8 platforms showed 150-190 "failures" in a
+            # normal 24h window, which is just routine quota-based rate
+            # limiting at this volume, not an anomaly. An absolute-count
+            # threshold is the wrong signal shape for this; would need a
+            # baseline comparison (like check_platform_dark's approach) to
+            # be alert-worthy. Left out rather than shipped noisy.
+        conn.close()
+    except Exception:
+        app.logger.exception('_compute_systems_alerts: scan-run health check failed')
+
+    try:
+        for j in _check_stale_jobs():
+            if j['name'] not in MARKETING_STALE_JOB_NAMES:
+                alerts.append(_stale_job_to_alert(j))
+    except Exception:
+        app.logger.exception('_compute_systems_alerts: stale jobs failed')
+
+    return alerts
+
+
+
+_SEVERITY_ORDER = {'critical': 0, 'warning': 1, 'info': 2}
+
+
+def _sort_alerts(alerts):
+    return sorted(alerts, key=lambda a: _SEVERITY_ORDER.get(a.get('severity'), 3))
+
+
 @app.route('/')
 @login_required
 def dashboard():
-    """IA spec §7: a work queue, not a status board -- the list of what's waiting for a
-    human, not five numbers to read and move past. Five sections, each a door straight to
-    the thing needing action:
-      1. Leads that just crossed into engaged -- the marketing->sales handoff (§4). Highest
-         priority; nothing surfaced this before this build.
-      2. Open CS alerts -- now the SAME live computation /cs-alerts itself shows
-         (_compute_cs_alerts()), not the disconnected wp_citemetrix_customer_alerts table
-         the old dashboard stat read from (see that function's docstring).
-      3. Investor threads awaiting reply (outreach_thread.status='sent').
-      4. Failed jobs and stale data (_check_stale_jobs() above).
-      5. Booked demos in the next 48 hours.
-    Stats strip below keeps exactly the 4 figures the spec names (MRR, subscribers, leads,
-    scans) -- CS alerts moved into the queue above instead of staying a redundant tile, and
-    'leads' now reads the unified `leads` pool (admin_portal DB), not wp_citemetrix_score_leads."""
-    q = {'engaged': [], 'cs_alerts': None, 'investor_threads': [], 'stale_jobs': [], 'demos': []}
+    """Unified Dashboard Alerts (2026-09-26) -- Overview. Merges every open
+    alert across the 4 business-domain categories (Marketing/CS/Sales/Systems),
+    sorted by severity, "all clear" when truly empty. This replaced the prior
+    fixed 5-section work-queue (engaged leads / cs alerts / investor threads /
+    stale jobs / demos) -- those routine, non-problem items now live as
+    informational rows on their own category sub-page (Sales), not mixed in
+    here. The point of this page is a 5-second emergency scan, not a queue."""
     m = {'subscribers': 0, 'mrr': 0.0, 'leads_7d': 0, 'scans_today': 0}
-
     try:
         conn = get_db()
         with conn.cursor() as cur:
@@ -353,7 +696,106 @@ def dashboard():
             m['mrr'] = float(cur.fetchone()['s'] or 0)
             cur.execute("SELECT COUNT(*) c FROM wp_citemetrix_scan_runs WHERE DATE(started_at)=CURDATE()")
             m['scans_today'] = int(cur.fetchone()['c'] or 0)
+        conn.close()
+    except Exception:
+        app.logger.exception('dashboard: WP-side stats failed')
+    try:
+        ac = get_admin_db()
+        with ac.cursor() as cur:
+            cur.execute("SELECT COUNT(*) c FROM leads WHERE excluded=0 AND created_at>=DATE_SUB(NOW(),INTERVAL 7 DAY)")
+            m['leads_7d'] = int(cur.fetchone()['c'] or 0)
+        ac.close()
+    except Exception:
+        app.logger.exception('dashboard: admin-portal stats failed')
 
+    by_domain = {}
+    try:
+        by_domain['marketing'] = _compute_marketing_alerts()
+    except Exception:
+        app.logger.exception('dashboard: marketing alerts failed')
+        by_domain['marketing'] = []
+    try:
+        by_domain['cs'] = _cs_alerts_to_common_shape(_compute_cs_alerts())
+    except Exception:
+        app.logger.exception('dashboard: cs alerts failed')
+        by_domain['cs'] = []
+    try:
+        by_domain['sales'] = _compute_sales_alerts()
+    except Exception:
+        app.logger.exception('dashboard: sales alerts failed')
+        by_domain['sales'] = []
+    try:
+        by_domain['systems'] = _compute_systems_alerts()
+    except Exception:
+        app.logger.exception('dashboard: systems alerts failed')
+        by_domain['systems'] = []
+
+    all_alerts = []
+    for domain, items in by_domain.items():
+        for a in items:
+            all_alerts.append({**a, 'domain': domain})
+    all_alerts = _sort_alerts(all_alerts)
+
+    counts = {d: len(v) for d, v in by_domain.items()}
+    all_clear = not all_alerts
+
+    return render_template('dashboard/overview.html', m=m, alerts=all_alerts, counts=counts, all_clear=all_clear)
+
+
+@app.route('/dashboard/marketing')
+@login_required
+@role_required('admin', 'marketing')
+def dashboard_marketing():
+    try:
+        alerts = _sort_alerts(_compute_marketing_alerts())
+    except Exception:
+        app.logger.exception('dashboard_marketing failed')
+        alerts = []
+    return render_template('dashboard/marketing.html', alerts=alerts, all_clear=not alerts)
+
+
+@app.route('/dashboard/cs')
+@login_required
+@role_required('admin', 'support')
+def dashboard_cs():
+    try:
+        alerts = _sort_alerts(_cs_alerts_to_common_shape(_compute_cs_alerts()))
+    except Exception:
+        app.logger.exception('dashboard_cs failed')
+        alerts = []
+    return render_template('dashboard/cs.html', alerts=alerts, all_clear=not alerts)
+
+
+@app.route('/dashboard/sales')
+@login_required
+@role_required('admin', 'sales')
+def dashboard_sales():
+    try:
+        alerts = _sort_alerts(_compute_sales_alerts())
+    except Exception:
+        app.logger.exception('dashboard_sales failed')
+        alerts = []
+
+    q = {'engaged': [], 'investor_threads': [], 'demos': []}
+    try:
+        ac = get_admin_db()
+        with ac.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, first_name, last_name, company, stage_entered_at "
+                "FROM leads WHERE stage='engaged' AND excluded=0 ORDER BY stage_entered_at DESC LIMIT 10"
+            )
+            q['engaged'] = cur.fetchall()
+            cur.execute(
+                "SELECT id, firm_name, target_person, updated_at FROM outreach_thread "
+                "WHERE status='sent' ORDER BY updated_at ASC LIMIT 10"
+            )
+            q['investor_threads'] = cur.fetchall()
+        ac.close()
+    except Exception:
+        app.logger.exception('dashboard_sales: informational queue failed (admin-portal side)')
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
             cur.execute(
                 "SELECT a.id, a.start_date, cu.full_name, cu.email "
                 "FROM wp_bookly_appointments a "
@@ -365,40 +807,63 @@ def dashboard():
             q['demos'] = cur.fetchall()
         conn.close()
     except Exception:
-        app.logger.exception('dashboard: WP-side queries failed')
+        app.logger.exception('dashboard_sales: informational queue failed (WP side)')
 
+    return render_template('dashboard/sales.html', alerts=alerts, all_clear=not alerts, q=q)
+
+
+@app.route('/dashboard/systems')
+@login_required
+@role_required('admin', 'operations')
+def dashboard_systems():
+    try:
+        alerts = _sort_alerts(_compute_systems_alerts())
+    except Exception:
+        app.logger.exception('dashboard_systems failed')
+        alerts = []
+    return render_template('dashboard/systems.html', alerts=alerts, all_clear=not alerts)
+
+
+@app.route('/sales/demo-requests/<int:bookly_id>/outcome', methods=['POST'])
+@login_required
+@role_required('admin', 'sales')
+def sales_demo_outcome(bookly_id):
+    assigned_to = request.form.get('assigned_to') or None
+    outcome = request.form.get('outcome') or 'pending'
+    # 'notes' isn't in the current assign/outcome dropdown UI -- only touch it
+    # when a caller actually sends it, so a plain assign/outcome change never
+    # silently blanks out notes entered some other way later.
+    notes_provided = 'notes' in request.form
+    notes = request.form.get('notes') or None
+    valid_outcomes = {'pending', 'held', 'no_show', 'converted', 'lost'}
+    if outcome not in valid_outcomes:
+        flash('Invalid outcome value.', 'error')
+        return redirect(url_for('sales_demo_requests'))
     try:
         ac = get_admin_db()
         with ac.cursor() as cur:
-            # 'leads' now reads the unified pool, not wp_citemetrix_score_leads (IA spec §7/§8).
-            cur.execute("SELECT COUNT(*) c FROM leads WHERE excluded=0 AND created_at>=DATE_SUB(NOW(),INTERVAL 7 DAY)")
-            m['leads_7d'] = int(cur.fetchone()['c'] or 0)
-
-            cur.execute(
-                "SELECT id, email, first_name, last_name, company, stage_entered_at "
-                "FROM leads WHERE stage='engaged' AND excluded=0 ORDER BY stage_entered_at DESC LIMIT 10"
-            )
-            q['engaged'] = cur.fetchall()
-
-            cur.execute(
-                "SELECT id, firm_name, target_person, updated_at FROM outreach_thread "
-                "WHERE status='sent' ORDER BY updated_at ASC LIMIT 10"
-            )
-            q['investor_threads'] = cur.fetchall()
+            if notes_provided:
+                cur.execute(
+                    "INSERT INTO demo_outcomes (bookly_appointment_id, assigned_to, outcome, notes) "
+                    "VALUES (%s,%s,%s,%s) "
+                    "ON DUPLICATE KEY UPDATE assigned_to=VALUES(assigned_to), outcome=VALUES(outcome), notes=VALUES(notes)",
+                    (bookly_id, assigned_to, outcome, notes),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO demo_outcomes (bookly_appointment_id, assigned_to, outcome) "
+                    "VALUES (%s,%s,%s) "
+                    "ON DUPLICATE KEY UPDATE assigned_to=VALUES(assigned_to), outcome=VALUES(outcome)",
+                    (bookly_id, assigned_to, outcome),
+                )
+        ac.commit()
         ac.close()
+        flash('Demo outcome updated.', 'success')
     except Exception:
-        app.logger.exception('dashboard: admin-portal-side queries failed')
+        app.logger.exception('sales_demo_outcome failed')
+        flash('Could not save demo outcome.', 'error')
+    return redirect(url_for('sales_demo_requests'))
 
-    try:
-        cs = _compute_cs_alerts()
-        q['cs_alerts'] = cs
-    except Exception:
-        app.logger.exception('dashboard: cs alerts computation failed')
-
-    q['stale_jobs'] = _check_stale_jobs()
-    q['all_clear'] = not (q['engaged'] or (q['cs_alerts'] and q['cs_alerts']['alerts']) or q['investor_threads'] or q['stale_jobs'] or q['demos'])
-
-    return render_template('dashboard.html', m=m, q=q)
 
 
 
@@ -5942,7 +6407,10 @@ def marketing_drip_campaigns():
                                   (SELECT COUNT(*) FROM drip_enrollments e WHERE e.campaign_id=c.id) AS enrolled_count,
                                   (SELECT COUNT(*) FROM drip_enrollments e WHERE e.campaign_id=c.id AND e.status='active') AS active_count,
                                   (SELECT COUNT(*) FROM drip_enrollments e WHERE e.campaign_id=c.id AND e.status='completed') AS completed_count,
-                                  (SELECT COUNT(*) FROM drip_steps s WHERE s.campaign_id=c.id) AS step_count
+                                  (SELECT COUNT(*) FROM drip_steps s WHERE s.campaign_id=c.id) AS step_count,
+                                  (SELECT COUNT(*) FROM drip_send_log dl INNER JOIN drip_enrollments e ON e.id=dl.enrollment_id WHERE e.campaign_id=c.id AND dl.status='sent') AS sent_count,
+                                  (SELECT COUNT(*) FROM drip_send_log dl INNER JOIN drip_enrollments e ON e.id=dl.enrollment_id WHERE e.campaign_id=c.id AND dl.opened_at IS NOT NULL) AS opened_count,
+                                  (SELECT COUNT(*) FROM drip_enrollments e WHERE e.campaign_id=c.id AND e.status='blocked') AS blocked_count
                            FROM drip_campaigns c LEFT JOIN source_refs b ON b.id=c.batch_id AND b.kind='import_batch'
                            ORDER BY c.created_at DESC""")
             campaigns = cur.fetchall()
@@ -5968,17 +6436,35 @@ def marketing_drip_campaign_detail(campaign_id):
             steps = cur.fetchall()
             cur.execute("""SELECT s.step_order,
                                   COUNT(DISTINCT CASE WHEN e.current_step >= s.step_order THEN e.id END) AS reached,
-                                  (SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=s.id AND dl.status='sent') AS sent_count
+                                  (SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=s.id AND dl.status='sent') AS sent_count,
+                                  (SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=s.id AND dl.opened_at IS NOT NULL) AS opened_count,
+                                  (SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=s.id AND dl.clicked_at IS NOT NULL) AS clicked_count
                            FROM drip_steps s LEFT JOIN drip_enrollments e ON e.campaign_id=s.campaign_id
                            WHERE s.campaign_id=%s GROUP BY s.id ORDER BY s.step_order ASC""", (campaign_id,))
             funnel = cur.fetchall()
             cur.execute("""SELECT status, COUNT(*) AS n FROM drip_enrollments WHERE campaign_id=%s GROUP BY status""", (campaign_id,))
             status_counts = {r['status']: r['n'] for r in cur.fetchall()}
+            # CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS5.1: the reason a send was
+            # blocked/suppressed has always been in drip_send_log.error -- this is what makes
+            # it visible on the campaign page instead of requiring a direct DB query to find,
+            # which is how this sat unnoticed for over a month. One row per lead, most recent
+            # first; verbatim error text, not summarized.
+            cur.execute(
+                """SELECT l.id AS lead_id, l.email, e.status AS enr_status, s.error, s.sent_at
+                   FROM drip_enrollments e
+                   JOIN leads l ON l.id = e.lead_id
+                   JOIN drip_send_log s ON s.enrollment_id = e.id
+                   WHERE e.campaign_id = %s AND e.status IN ('blocked','suppressed')
+                     AND s.status IN ('blocked','suppressed')
+                   ORDER BY s.sent_at DESC LIMIT 50""",
+                (campaign_id,)
+            )
+            blocked_leads = cur.fetchall()
             cur.execute("SELECT id, label AS name, new_count FROM source_refs WHERE kind='import_batch' ORDER BY created_at DESC")
             batches = cur.fetchall()
     finally:
         conn.close()
-    return render_template('marketing/drip_campaign_detail.html', campaign=campaign, steps=steps, funnel=funnel, status_counts=status_counts, batches=batches)
+    return render_template('marketing/drip_campaign_detail.html', campaign=campaign, steps=steps, funnel=funnel, status_counts=status_counts, blocked_leads=blocked_leads, batches=batches)
 
 
 @app.route('/api/drip/campaigns', methods=['POST'])
@@ -6227,26 +6713,130 @@ def api_drip_toggle_campaign(campaign_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/drip/ses-webhook', methods=['POST'])
+def api_drip_ses_webhook():
+    """SNS delivery target for SES Open/Click events on drip_send_log.
+
+    This pipeline sends every email through the 'citemetrix-tracking' SES
+    configuration set (email_helper.send_email / jobs/drip_cron.py) -- SES
+    was always instructed to publish Open/Click events, but until now
+    nothing existed to receive them. The CiteMetrix WordPress plugin's own
+    drip engine has had this exact pattern since 2026-07-24
+    (class-citemetrix-ses.php::handle_sns_webhook) for its own, separate
+    send pipeline; this mirrors that shape but writes to THIS system's
+    drip_send_log, matched on provider_msg_id (this table's equivalent of
+    that one's ses_message_id) rather than reusing the WP endpoint, which
+    only ever updates WP-side tables and would silently no-op for these
+    message IDs.
+
+    No @login_required -- SNS calls this directly, unauthenticated by
+    definition. Gated instead by a shared-secret query-string param
+    (?secret=...) checked against DRIP_SES_WEBHOOK_SECRET, so this can't be
+    driven by an arbitrary POST the way the WP endpoint's bare presence
+    check (?citemetrix_ses_webhook=1, no value check) can be. Give this
+    exact URL, with the secret, to the SNS topic subscription.
+    """
+    expected_secret = os.getenv('DRIP_SES_WEBHOOK_SECRET')
+    if not expected_secret or request.args.get('secret') != expected_secret:
+        return 'Forbidden', 403
+
+    try:
+        data = json.loads(request.get_data(as_text=True) or '{}')
+    except ValueError:
+        return 'Invalid JSON', 400
+
+    msg_type = data.get('Type', '')
+
+    if msg_type == 'SubscriptionConfirmation':
+        subscribe_url = data.get('SubscribeURL', '')
+        if subscribe_url:
+            try:
+                r = requests.get(subscribe_url, timeout=15)
+                r.raise_for_status()
+                return 'Subscription confirmed', 200
+            except Exception as e:
+                return f'Confirmation failed: {e}', 500
+        return 'No SubscribeURL', 400
+
+    if msg_type == 'Notification':
+        try:
+            event = json.loads(data.get('Message', '{}'))
+        except ValueError:
+            return 'OK', 200  # malformed inner message -- ack anyway, SNS will not retry usefully
+        event_type = event.get('eventType', '')
+        message_id = (event.get('mail') or {}).get('messageId', '')
+        if message_id and event_type in ('Open', 'Click'):
+            column = 'opened_at' if event_type == 'Open' else 'clicked_at'
+            try:
+                conn = get_admin_db()
+                with conn.cursor() as cur:
+                    # COALESCE so a second Open/Click on the same send keeps the FIRST
+                    # timestamp, matching the WP-side pattern for the same reason.
+                    cur.execute(
+                        f"UPDATE drip_send_log SET {column} = COALESCE({column}, NOW()) "
+                        f"WHERE provider_msg_id = %s",
+                        (message_id,)
+                    )
+                    conn.commit()
+                conn.close()
+            except Exception:
+                pass  # never let a tracking-write failure surface as an SNS delivery failure
+        return 'OK', 200
+
+    return 'Ignored', 200
+
+
+def _unsubscribe_lead(conn, lead_id):
+    """The one implementation of what 'unsubscribed' means for a lead -- suppress
+    globally, halt every active enrollment (not just one campaign). Shared by the
+    public token-based route (a real recipient clicking the email footer) and the
+    authenticated staff action (the Leads page kebab menu), so the two can never
+    drift into doing slightly different things. Returns the lead's email, or None
+    if the lead doesn't exist."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, email FROM leads WHERE id=%s", (lead_id,))
+        lead = cur.fetchone()
+        if not lead:
+            return None
+        cur.execute("UPDATE leads SET suppressed_at=NOW(), suppression_reason='unsubscribed' WHERE id=%s", (lead['id'],))
+        cur.execute("UPDATE drip_enrollments SET status='unsubscribed' WHERE lead_id=%s AND status='active'", (lead['id'],))
+        conn.commit()
+    return lead['email']
+
+
 @app.route('/unsubscribe/<token>')
 def public_unsubscribe(token):
-    """Public, no-login unsubscribe -- the link in every drip email. Marks
-    the lead unsubscribed globally and halts every active enrollment, not
-    just one campaign."""
+    """Public, no-login unsubscribe -- the link in every drip email."""
     try:
         conn = get_admin_db()
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, email FROM leads WHERE unsubscribe_token=%s", (token,))
-            lead = cur.fetchone()
-            if not lead:
-                conn.close()
-                return "This unsubscribe link isn't valid or has already been used.", 404
-            cur.execute("UPDATE leads SET suppressed_at=NOW(), suppression_reason='unsubscribed' WHERE id=%s", (lead['id'],))
-            cur.execute("UPDATE drip_enrollments SET status='unsubscribed' WHERE lead_id=%s AND status='active'", (lead['id'],))
-            conn.commit()
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM leads WHERE unsubscribe_token=%s", (token,))
+        lead = cur.fetchone()
+        cur.close()
+        if not lead:
+            conn.close()
+            return "This unsubscribe link isn't valid or has already been used.", 404
+        email = _unsubscribe_lead(conn, lead['id'])
         conn.close()
-        return f"You're unsubscribed. {lead['email']} won't receive any more of these emails."
+        return f"You're unsubscribed. {email} won't receive any more of these emails."
     except Exception as e:
         return f"Something went wrong: {e}", 500
+
+
+@app.route('/api/leads/<int:lead_id>/unsubscribe', methods=['POST'])
+@login_required
+@role_required('admin', 'sales', 'marketing')
+def api_leads_unsubscribe(lead_id):
+    """Staff-triggered unsubscribe from the Leads page kebab menu -- same effect as
+    the recipient clicking their own email footer link, via _unsubscribe_lead()."""
+    conn = get_admin_db()
+    try:
+        email = _unsubscribe_lead(conn, lead_id)
+    finally:
+        conn.close()
+    if email is None:
+        return jsonify({'error': 'Lead not found.'}), 404
+    return jsonify({'success': True, 'email': email})
 
 
 @app.route('/marketing/nurture')
@@ -6352,7 +6942,24 @@ def sales_demo_requests():
         conn.close()
     except Exception:
         pass
-    return render_template('sales/demo_requests.html', rows=rows, now=_dt.datetime.now())
+
+    users = []
+    outcomes_by_id = {}
+    try:
+        ac = get_admin_db()
+        with ac.cursor() as cur:
+            cur.execute("SELECT id, name FROM users WHERE active=1 AND role IN ('admin','sales') ORDER BY name")
+            users = cur.fetchall()
+            cur.execute("SELECT bookly_appointment_id, assigned_to, outcome, notes FROM demo_outcomes")
+            outcomes_by_id = {r['bookly_appointment_id']: r for r in cur.fetchall()}
+        ac.close()
+    except Exception:
+        app.logger.exception('sales_demo_requests: demo_outcomes/users read failed')
+
+    for r in rows:
+        r['outcome_row'] = outcomes_by_id.get(r['id'])
+
+    return render_template('sales/demo_requests.html', rows=rows, now=_dt.datetime.now(), users=users)
 
 @app.route('/operations/api-status')
 @login_required
@@ -6382,6 +6989,120 @@ def operations_api_status():
     except Exception:
         pass
     return render_template('operations/api_status.html', d=data)
+
+
+# ── AWS Pipeline health (task #47, admin health dashboard) ────────────────
+# Per-job-type health for the Wave-1/Wave-2 AWS-migrated job types (accuracy,
+# technical, sentiment, domain-competitor) plus live AWS control-plane state
+# (ECS/SQS/EventBridge). The existing /operations page's "Fast Lane" status
+# is keyed off cm_last_run_citemetrix_process_analysis_queue -- that hook
+# still ticks every minute post-migration (its $allowed_types is now empty
+# for these types), so it looks "healthy" regardless of whether the AWS
+# workers are actually running. This page is the real signal for those types.
+AWS_JOB_TYPE_CADENCE = {
+    'accuracy_check':         {'label': 'Accuracy Check',         'stale_after_hours': 48},
+    'technical_check':        {'label': 'Technical Check',        'stale_after_hours': 24 * 9},
+    'sentiment_analysis':     {'label': 'Sentiment Analysis',     'stale_after_hours': 48},
+    'domain_competitor_scan': {'label': 'Domain Competitor Scan', 'stale_after_hours': 24 * 9},
+}
+
+
+def _fetch_aws_health_snapshot():
+    url = os.environ.get('CITEMETRIX_HEALTH_URL')
+    secret = os.environ.get('CITEMETRIX_SCHEDULER_SHARED_SECRET')
+    if not url or not secret:
+        return None, 'CITEMETRIX_HEALTH_URL / CITEMETRIX_SCHEDULER_SHARED_SECRET not configured'
+    try:
+        r = requests.post(url, json={'action': 'health_snapshot', 'secret': secret}, timeout=25)
+        if r.status_code != 200:
+            return None, f'health endpoint returned HTTP {r.status_code}: {r.text[:300]}'
+        return r.json(), None
+    except Exception as e:  # noqa: BLE001
+        return None, str(e)[:300]
+
+
+def _wp_circuit_breaker_status(conn):
+    """Regex-extract the flat scalar fields we need from the PHP-serialized
+    citemetrix_spend_monitor option, rather than pulling in a full unserializer
+    dependency for a handful of known-shape fields."""
+    import re
+    out = {'threshold': None, 'enabled': None, 'today_estimate': None, 'tripped': None}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT option_value FROM wp_options WHERE option_name='citemetrix_spend_monitor'")
+            row = cur.fetchone()
+        raw = row['option_value'] if row else ''
+        if isinstance(raw, (bytes, bytearray)):
+            raw = raw.decode('utf-8', errors='replace')
+        m = re.search(r's:15:"daily_threshold";d:([0-9.]+)', raw) or re.search(r's:15:"daily_threshold";i:(\d+)', raw)
+        if m:
+            out['threshold'] = float(m.group(1))
+        m = re.search(r's:23:"circuit_breaker_enabled";i:(\d)', raw)
+        if m:
+            out['enabled'] = bool(int(m.group(1)))
+    except Exception:
+        app.logger.exception('_wp_circuit_breaker_status: option read failed')
+
+    try:
+        with conn.cursor() as cur:
+            # Mirrors CiteMetrix_Spend_Monitor::get_today_local_estimated_spend():
+            # hallucination rows added today ($0.03 each) + Claude-tagged
+            # api_usage rows added today ($0.005 each).
+            cur.execute("SELECT COUNT(*) n FROM wp_citemetrix_hallucinations WHERE DATE(created_at)=CURDATE()")
+            hall_today = int(cur.fetchone()['n'] or 0)
+            cur.execute("SELECT COUNT(*) n FROM wp_citemetrix_api_usage WHERE DATE(created_at)=CURDATE() AND platform='claude'")
+            claude_today = int(cur.fetchone()['n'] or 0)
+        out['today_estimate'] = round(hall_today * 0.03 + claude_today * 0.005, 2)
+        if out['threshold'] is not None and out['enabled']:
+            out['tripped'] = out['today_estimate'] >= out['threshold']
+    except Exception:
+        app.logger.exception('_wp_circuit_breaker_status: estimate query failed')
+
+    return out
+
+
+@app.route('/operations/aws-pipeline')
+@login_required
+@role_required('admin', 'operations')
+def operations_aws_pipeline():
+    data = {'aws': None, 'aws_error': None, 'job_health': [], 'circuit_breaker': {}}
+
+    data['aws'], data['aws_error'] = _fetch_aws_health_snapshot()
+
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            for job_type, meta in AWS_JOB_TYPE_CADENCE.items():
+                cur.execute(
+                    "SELECT MAX(created_at) AS last_created, "
+                    "MAX(CASE WHEN status='complete' THEN updated_at END) AS last_completed, "
+                    "SUM(created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS rows_24h "
+                    "FROM wp_citemetrix_analysis_jobs WHERE job_type=%s",
+                    (job_type,)
+                )
+                row = cur.fetchone() or {}
+                last_created = row.get('last_created')
+                age_hours = (datetime.now() - last_created).total_seconds() / 3600 if last_created else None
+                if age_hours is None:
+                    status = 'unknown'
+                elif age_hours > meta['stale_after_hours']:
+                    status = 'stale'
+                else:
+                    status = 'healthy'
+                data['job_health'].append({
+                    'job_type': job_type, 'label': meta['label'],
+                    'last_created': last_created, 'last_completed': row.get('last_completed'),
+                    'rows_24h': int(row.get('rows_24h') or 0),
+                    'age_hours': round(age_hours, 1) if age_hours is not None else None,
+                    'status': status,
+                })
+        data['circuit_breaker'] = _wp_circuit_breaker_status(conn)
+        conn.close()
+    except Exception:
+        app.logger.exception('operations_aws_pipeline: WP DB queries failed')
+
+    return render_template('operations/aws_pipeline.html', d=data)
+
 
 @app.route('/customers/domain-transfer')
 @login_required
@@ -7042,6 +7763,7 @@ def marketing_leads():
     campaign_filter = (request.args.get('campaign') or request.args.get('source_campaign') or '').strip()
     source_filter = (request.args.get('source') or '').strip()
     landing_filter = (request.args.get('landing_page') or '').strip()
+    search_filter = (request.args.get('q') or '').strip()
     show_excluded = request.args.get('show') == 'excluded'
     show_suppressed = request.args.get('suppressed') == '1'
     try:
@@ -7075,6 +7797,25 @@ def marketing_leads():
     if landing_filter:
         where.append("EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.source_page')) LIKE %s)")
         params.append('%' + landing_filter + '%')
+    if search_filter:
+        # Free-text search across every identity field a lead is realistically looked up
+        # by -- email first (the common case), then name/company/title/phone/LinkedIn so
+        # "who was that person from Acme" or a phone number pasted from an email both work,
+        # not just an exact email match. brand_name is the one displayed field ("Name /
+        # Brand" column) that ISN'T a leads column -- it lives in the free_check_completed
+        # event payload (the scanned domain's brand, for inbound leads), so it needs its
+        # own EXISTS clause OR'd in, same shape as the campaign/source/landing filters
+        # above, or searching "the Acme scan" would silently miss the row it's shown on.
+        # Plain LIKE, no FULLTEXT index -- this table's size (low thousands of rows)
+        # doesn't need one; revisit only if this table grows enough for it to matter.
+        needle = '%' + search_filter + '%'
+        where.append(
+            "(email LIKE %s OR first_name LIKE %s OR last_name LIKE %s OR company LIKE %s "
+            "OR title LIKE %s OR phone LIKE %s OR linkedin_url LIKE %s "
+            "OR EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' "
+            "AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.brand_name')) LIKE %s))"
+        )
+        params.extend([needle] * 8)
     wsql = " WHERE " + " AND ".join(where)
 
     leads, batches = [], []
@@ -7191,7 +7932,7 @@ def marketing_leads():
     return render_template('marketing/leads.html', leads=leads, batches=batches,
                            path_counts=path_counts, stage_counts=stage_counts,
                            f_path=path_filter, f_stage=stage_filter, f_segment=seg_filter,
-                           f_campaign=campaign_filter, f_source=source_filter, f_landing=landing_filter,
+                           f_campaign=campaign_filter, f_source=source_filter, f_landing=landing_filter, f_search=search_filter,
                            show_excluded=show_excluded, show_suppressed=show_suppressed,
                            excluded_count=excluded_count, suppressed_count=suppressed_count,
                            by_segment=by_segment, page=page, total_pages=total_pages, total_filtered=total_filtered,
@@ -7485,12 +8226,24 @@ def api_leads_detail(lead_id):
             enrollments = cur.fetchall()
             for e in enrollments:
                 timeline.append({'occurred_at': e['enrolled_at'], 'text': f"Enrolled in {e['campaign_name']}"})
+                e['block_reason'] = None
+                # CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS5.1: the panel's own
+                # state row (e.g. "Blocked (step 0)") is a separate render from the timeline
+                # below -- both needed the reason attached, not just the timeline entry.
+                if e['status'] in ('blocked', 'suppressed'):
+                    cur.execute(
+                        "SELECT error FROM drip_send_log WHERE enrollment_id=%s AND status=%s ORDER BY sent_at DESC LIMIT 1",
+                        (e['id'], e['status'])
+                    )
+                    err_row = cur.fetchone()
+                    if err_row:
+                        e['block_reason'] = err_row['error']
 
             if enrollments:
                 enrollment_ids = [e['id'] for e in enrollments]
                 fmt = ','.join(['%s'] * len(enrollment_ids))
                 cur.execute(
-                    f"SELECT l.enrollment_id, l.sent_at, l.status AS send_status, s.step_order, c.name AS campaign_name "
+                    f"SELECT l.enrollment_id, l.sent_at, l.status AS send_status, l.error, s.step_order, c.name AS campaign_name "
                     f"FROM drip_send_log l JOIN drip_steps s ON s.id=l.step_id JOIN drip_enrollments e ON e.id=l.enrollment_id "
                     f"JOIN drip_campaigns c ON c.id=e.campaign_id WHERE l.enrollment_id IN ({fmt})",
                     enrollment_ids
@@ -7498,7 +8251,13 @@ def api_leads_detail(lead_id):
                 verbs = {'sent': 'sent', 'failed': 'failed to send', 'suppressed': 'suppressed', 'blocked': 'blocked', 'cancelled': 'cancelled'}
                 for r in cur.fetchall():
                     verb = verbs.get(r['send_status'], r['send_status'])
-                    timeline.append({'occurred_at': r['sent_at'], 'text': f"{r['campaign_name']} step {r['step_order']} {verb}"})
+                    text = f"{r['campaign_name']} step {r['step_order']} {verb}"
+                    # CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS5.1: this used to
+                    # read just "campaign step 1 blocked" with no way to see why without a
+                    # direct DB query -- the reason has always been sitting in l.error.
+                    if r['send_status'] in ('blocked', 'suppressed') and r.get('error'):
+                        text += f" -- {r['error']}"
+                    timeline.append({'occurred_at': r['sent_at'], 'text': text})
 
             timeline = [t for t in timeline if t['occurred_at'] is not None]
             timeline.sort(key=lambda x: x['occurred_at'], reverse=True)

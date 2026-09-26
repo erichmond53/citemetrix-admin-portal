@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% import '_macros.html' as macros %}
+{% block title %}Sales Alerts{% endblock %}
+{% block page_title %}Sales Alerts{% endblock %}
+{% block content %}
+{% include '_alert_list_style.html' %}
+
+{{ macros.alert_list(alerts, all_clear) }}
+
+<div class="dash-stats-label">Routine work (not problems)</div>
+<div class="grid grid-3" style="gap:16px;">
+
+  <div class="al-section" style="margin-bottom:0;">
+    <div class="wq-header"><div class="wq-title">Just crossed into Engaged</div>{% if q.engaged %}<span class="wq-badge">{{ q.engaged|length }}</span>{% endif %}</div>
+    {% if q.engaged %}
+      {% for l in q.engaged %}
+        <div class="wq-row" onclick="openLeadDetail({{ l.id }})" style="cursor:pointer;">
+          <span class="wq-main">{{ ((l.first_name or '') ~ ' ' ~ (l.last_name or ''))|trim or l.company or l.email or ('Lead #' ~ l.id) }}</span>
+          <span class="wq-sub">{{ l.company or '' }}{% if l.stage_entered_at %} &middot; {{ l.stage_entered_at.strftime('%Y-%m-%d') }}{% endif %}</span>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="wq-empty">No one has replied yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="al-section" style="margin-bottom:0;">
+    <div class="wq-header"><div class="wq-title">Investor pipeline (sent)</div>{% if q.investor_threads %}<span class="wq-badge">{{ q.investor_threads|length }}</span>{% endif %}</div>
+    {% if q.investor_threads %}
+      {% for t in q.investor_threads %}
+        <a class="wq-row" href="/outreach">
+          <span class="wq-main">{{ t.firm_name }}{% if t.target_person %} &mdash; {{ t.target_person }}{% endif %}</span>
+          <span class="wq-sub">{% if t.updated_at %}{{ t.updated_at.strftime('%Y-%m-%d') }}{% endif %}</span>
+        </a>
+      {% endfor %}
+    {% else %}
+      <div class="wq-empty">Nothing awaiting reply.</div>
+    {% endif %}
+  </div>
+
+  <div class="al-section" style="margin-bottom:0;">
+    <div class="wq-header"><div class="wq-title">Booked demos (next 48h)</div>{% if q.demos %}<span class="wq-badge">{{ q.demos|length }}</span>{% endif %}</div>
+    {% if q.demos %}
+      {% for d in q.demos %}
+        <a class="wq-row" href="/sales/demo-requests">
+          <span class="wq-main">{{ d.full_name or d.email or 'Unknown' }}</span>
+          <span class="wq-sub">{{ d.start_date.strftime('%a %H:%M') if d.start_date else '' }}</span>
+        </a>
+      {% endfor %}
+    {% else %}
+      <div class="wq-empty">Nothing booked in the next 48 hours.</div>
+    {% endif %}
+  </div>
+
+</div>
+
+{% endblock %}

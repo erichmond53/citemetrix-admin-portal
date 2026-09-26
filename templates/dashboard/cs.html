@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% import '_macros.html' as macros %}
+{% block title %}CS Alerts{% endblock %}
+{% block page_title %}CS Alerts{% endblock %}
+{% block content %}
+{% include '_alert_list_style.html' %}
+
+{{ macros.alert_list(alerts, all_clear) }}
+
+<p style="font-size:12px;color:var(--gray-400);margin-top:16px;">Full account detail (email, exact account) lives on the <a href="{{ url_for('cs_alerts') }}">CS Alerts</a> page.</p>
+
+{% endblock %}

@@ -66,3 +66,41 @@
         <span class="badge" style="background:var(--gray-100); color:var(--gray-600);">Free / Beta</span>
     {% endif %}
 {% endmacro %}
+
+
+{# Render a scannable list of alerts (unified Dashboard alerts, 2026-09-26).
+   Requires {% include '_alert_list_style.html' %} once in the calling
+   template (matches this app's per-template <style> convention, not a
+   shared stylesheet).
+
+   Args:
+       alerts:    list of {severity, problem, detail, link, link_label, when[, domain]},
+                  the common shape every _compute_*_alerts() function returns.
+       all_clear: bool -- when true, alerts is expected to be empty; renders a
+                  "nothing needs attention" banner instead of an empty list.
+       show_domain: bool (default false) -- when true, prefixes each row with a
+                  small domain tag (Marketing/CS/Sales/Systems). Used on the
+                  Overview page where alerts from all 4 domains are mixed
+                  together; omitted on a single-category page where it's redundant.
+
+   Visual conventions: critical=red, warning=amber, info=blue-gray -- same
+   badge classes used everywhere else in this app (badge-danger/-warning/-info). #}
+{% macro alert_list(alerts, all_clear, show_domain=false) %}
+  {% if all_clear %}
+    <div class="al-allclear">Nothing needs attention right now — all caught up.</div>
+  {% else %}
+    <div class="al-section">
+      {% for a in alerts %}
+      {% if a.link %}<a class="al-row" href="{{ a.link }}">{% else %}<div class="al-row">{% endif %}
+        <span class="badge al-badge {{ 'badge-danger' if a.severity == 'critical' else ('badge-warning' if a.severity == 'warning' else 'badge-info') }}">{{ a.severity }}</span>
+        <div style="flex:1;min-width:0;">
+          {% if show_domain and a.domain %}<div class="al-domain">{{ a.domain }}</div>{% endif %}
+          <div class="al-problem">{{ a.problem }}</div>
+          {% if a.detail %}<div class="al-detail">{{ a.detail }}</div>{% endif %}
+        </div>
+        {% if a.link %}<span class="al-link">{{ a.link_label or 'View' }} &rarr;</span>{% endif %}
+      {% if a.link %}</a>{% else %}</div>{% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endmacro %}
