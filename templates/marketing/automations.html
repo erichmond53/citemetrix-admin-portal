@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Automations{% endblock %}
+{% block content %}
+<style>
+.am-new { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px; margin-bottom:24px; display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+.am-new .fg { flex:1; min-width:220px; }
+.am-new label { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+.am-new input { width:100%; padding:10px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box; }
+.am-card { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:16px 20px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.am-card-main { flex:1; min-width:0; }
+.am-card-main a { text-decoration:none; color:inherit; }
+.am-card h3 { margin:0 0 4px; font-size:15px; }
+.am-meta { font-size:13px; color:var(--gray-500); }
+.am-badge { font-size:11px; font-weight:600; text-transform:uppercase; padding:3px 10px; border-radius:6px; margin-left:8px; }
+.am-badge.draft { background:#F3F4F6; color:#6B7280; }
+.am-badge.active { background:#D1FAE5; color:#065F46; }
+.am-badge.inactive { background:#F3F4F6; color:#6B7280; }
+.am-badge.archived { background:#F3F4F6; color:#9CA3AF; }
+.am-funnel { display:flex; gap:6px; align-items:center; font-size:13px; color:var(--gray-600); }
+.am-funnel b { color:var(--gray-900,#111); }
+.am-actions { display:flex; gap:8px; flex-shrink:0; }
+.btn-s { background:var(--gray-100); color:var(--gray-700); border:1px solid var(--gray-200); padding:7px 12px; border-radius:8px; font-weight:500; cursor:pointer; font-size:12px; }
+</style>
+
+<div class="am-new">
+  <div class="fg"><label>New automation name</label><input type="text" id="am-name" placeholder="e.g. Warm nurture — engaged clients"></div>
+  <button class="btn-p" style="background:var(--primary);color:#fff;border:none;padding:10px 18px;border-radius:8px;font-weight:500;cursor:pointer;" onclick="amCreate()">Create automation</button>
+</div>
+
+{% for a in automations %}
+<div class="am-card">
+  <div class="am-card-main">
+    <a href="/marketing/automations/{{ a.id }}">
+      <h3>{{ a.name }}<span class="am-badge {{ a.status }}">{{ a.status }}</span></h3>
+    </a>
+    <div class="am-funnel"><b>{{ a.entered }}</b> entered → <b>{{ a.processing }}</b> processing → <b>{{ a.exited }}</b> exited</div>
+  </div>
+  <div class="am-actions">
+    <a href="/marketing/automations/{{ a.id }}"><button class="btn-s">Edit</button></a>
+    {% if a.status == 'active' %}
+    <button class="btn-s" onclick="amSetStatus({{ a.id }}, 'inactive')">Deactivate</button>
+    {% else %}
+    <button class="btn-s" onclick="amSetStatus({{ a.id }}, 'active')">Activate</button>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="card" style="text-align:center;color:var(--gray-500);padding:40px;">No automations yet. Create one above.</div>
+{% endfor %}
+
+<script>
+async function amCreate(){
+  const name = document.getElementById('am-name').value.trim();
+  if (!name) return;
+  const r = await fetch('/api/automations', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+  const j = await r.json();
+  if (r.ok) { window.location = '/marketing/automations/' + j.automation_id; }
+  else { alert(j.error || 'Failed to create automation.'); }
+}
+async function amSetStatus(id, status){
+  const r = await fetch('/api/automations/'+id+'/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status})});
+  if (r.ok) location.reload(); else alert('Failed to update status.');
+}
+</script>
+{% endblock %}

@@ -3,6 +3,10 @@
 {% block page_title %}AI Platform APIs{% endblock %}
 {% block content %}
 
+<div style="font-size:12px;color:var(--gray-400);margin-bottom:14px;">
+  Page data as of {{ d.now_utc.strftime('%Y-%m-%d %H:%M') if d.now_utc else '?' }} UTC (refreshes on page load).
+</div>
+
 <div class="grid grid-4" style="margin-bottom:24px;">
   <div class="stat-card"><div class="stat-label">Calls (24h)</div><div class="stat-value">{{ '{:,}'.format(d.calls_24h) }}</div></div>
   <div class="stat-card"><div class="stat-label">Calls (7d)</div><div class="stat-value">{{ '{:,}'.format(d.calls_7d) }}</div></div>
@@ -24,11 +28,27 @@
   <p style="font-size:12px;color:var(--gray-400);margin-top:10px;">Quota/auth errors are the account&#39;s responsibility (their BYOK key). Structural + uncategorized are where SysOps should look. <strong>Tagging <code>error_category</code> on every scan failure in the engine would let this separate structural-vs-client cleanly</strong> &mdash; a scan-engine improvement.</p>
 </div>
 
-<div class="grid grid-2">
+<div class="card" style="margin-top:24px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+    <div class="card-title" style="margin:0;">Call volume &amp; error rate over time</div>
+    <div class="range-selector" style="display:flex;gap:6px;">
+      <button type="button" class="range-btn" data-range="1h">Last hour</button>
+      <button type="button" class="range-btn active" data-range="1w">Last week</button>
+      <button type="button" class="range-btn" data-range="2w">Last 2 weeks</button>
+      <button type="button" class="range-btn" data-range="1mo">Last month</button>
+    </div>
+  </div>
+  <div style="position:relative;height:320px;">
+    <canvas id="apiStatusChart"></canvas>
+  </div>
+  <div id="apiStatusChartMeta" style="font-size:11px;color:var(--gray-400);margin-top:8px;"></div>
+</div>
+
+<div class="grid grid-2" style="margin-top:24px;">
   <div class="card">
-    <div class="card-title" style="margin-bottom:12px;">By Platform (30 days)</div>
+    <div class="card-title" style="margin-bottom:12px;">By Platform (30 days, with live status)</div>
     <table class="table">
-      <thead><tr><th>Platform</th><th style="text-align:right;">Calls</th><th style="text-align:right;">Error %</th><th style="text-align:right;">Avg</th></tr></thead>
+      <thead><tr><th>Platform</th><th style="text-align:right;">Calls</th><th style="text-align:right;">Error %</th><th style="text-align:right;">Avg</th><th>Last activity</th></tr></thead>
       <tbody>
         {% for p in d.by_platform %}
         <tr>
@@ -36,11 +56,21 @@
           <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(p.calls) }}</td>
           <td style="text-align:right;font-weight:600;color:{{ 'var(--success)' if p.err_rate < 5 else ('var(--warning)' if p.err_rate < 15 else 'var(--danger)') }};">{{ p.err_rate }}%</td>
           <td style="text-align:right;color:var(--gray-500);">{{ (p.avg_ms/1000)|round(1) }}s</td>
+          <td>
+            {% if p.idle %}
+              <span class="badge" style="background:var(--gray-100);color:var(--gray-500);">idle{% if p.age_min is not none %} &mdash; {{ (p.age_min/60)|round(1) }}h since last call{% else %} &mdash; no data{% endif %}</span>
+            {% else %}
+              <span class="badge" style="background:{{ 'rgba(16,185,129,0.12)' if p.last_status != 'error' else 'rgba(220,38,38,0.10)' }};color:{{ 'var(--success)' if p.last_status != 'error' else 'var(--danger)' }};">
+                {{ 'live — last call succeeded' if p.last_status != 'error' else 'live — last call errored' }}, {{ p.age_min }}m ago
+              </span>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
-        {% if not d.by_platform %}<tr><td colspan="4" style="color:var(--gray-400);">No usage data.</td></tr>{% endif %}
+        {% if not d.by_platform %}<tr><td colspan="5" style="color:var(--gray-400);">No usage data.</td></tr>{% endif %}
       </tbody>
     </table>
+    <p style="font-size:11px;color:var(--gray-400);margin:10px 0 0;">"Idle" means no calls in the last 2 hours — the error % shown is historical (30-day), not necessarily happening right now. Scan traffic is domain-scheduled and bursty, so gaps between calls are normal.</p>
   </div>
 
   <div class="card">
@@ -58,8 +88,8 @@
   </div>
 </div>
 
-<div class="card">
-  <div class="card-title" style="margin-bottom:12px;">Daily Volume (14 days)</div>
+<div class="card" style="margin-top:24px;">
+  <div class="card-title" style="margin-bottom:12px;">Daily Volume (14 days) &mdash; detail table</div>
   <div style="overflow-x:auto;">
   <table class="table">
     <thead><tr><th>Date</th><th style="text-align:right;">Calls</th><th style="text-align:right;">Errors</th><th style="text-align:right;">Error %</th></tr></thead>
@@ -72,5 +102,76 @@
   </table>
   </div>
 </div>
+
+<style>
+.range-btn { padding:6px 12px; font-size:12px; border:1px solid var(--gray-200); background:#fff; border-radius:6px; cursor:pointer; color:var(--gray-600); }
+.range-btn.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+.range-btn:hover:not(.active) { background:var(--gray-50); }
+</style>
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script>
+(function(){
+  const PLATFORM_COLORS = {
+    claude: '#d97757', chatgpt: '#10a37f', copilot: '#0078d4', perplexity: '#20808d',
+    gemini: '#4285f4', grok: '#000000', mistral: '#ff7000', deepseek: '#4d6bfe',
+  };
+  function colorFor(p, i) {
+    return PLATFORM_COLORS[p] || ['#6366f1','#ec4899','#14b8a6','#f59e0b','#8b5cf6'][i % 5];
+  }
+  const ctx = document.getElementById('apiStatusChart').getContext('2d');
+  let chart = null;
+
+  function render(payload) {
+    const datasets = payload.platforms.map((p, i) => ({
+      label: p,
+      data: payload.series[p].err_rate,
+      borderColor: colorFor(p, i),
+      backgroundColor: colorFor(p, i),
+      spanGaps: true,
+      tension: 0.25,
+      pointRadius: payload.buckets.length > 60 ? 0 : 2,
+      borderWidth: 2,
+    }));
+    if (chart) { chart.destroy(); }
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: { labels: payload.buckets, datasets: datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
+        scales: {
+          y: { title: { display: true, text: 'Error rate %' }, min: 0 },
+          x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+        },
+      },
+    });
+    document.getElementById('apiStatusChartMeta').textContent =
+      payload.label + ' — ' + payload.buckets.length + ' data point(s) per platform. Line = error rate %; gaps mean no calls in that bucket.';
+  }
+
+  function load(range) {
+    fetch('/api/operations/api-status/timeseries?range=' + encodeURIComponent(range))
+      .then(r => r.json())
+      .then(payload => {
+        if (payload.error) {
+          document.getElementById('apiStatusChartMeta').textContent = 'Chart data unavailable: ' + payload.error;
+          return;
+        }
+        render(payload);
+      });
+  }
+
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      load(btn.dataset.range);
+    });
+  });
+
+  load('1w');
+})();
+</script>
 
 {% endblock %}

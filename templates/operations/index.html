@@ -242,6 +242,9 @@ function acknowledgeAlert(alertId) {
 </div>
 
 <div class="tab-content" data-tab="pipeline">
+    <div style="font-size:12px;color:var(--gray-400);margin-bottom:14px;">
+      Page data as of {{ data.now_utc.strftime('%Y-%m-%d %H:%M') if data.now_utc else '?' }} UTC (refreshes on page load). Fetcher fleet / queue depths are live AWS reads at render time.
+    </div>
     {% if data.v2.error %}
     <div class="lane-card error" style="margin-bottom:20px;">
         <div class="lane-name">Pipeline data unavailable</div>
@@ -308,6 +311,24 @@ function acknowledgeAlert(alertId) {
         </div>
     </div>
 
+    <!-- 2026-09-24 (near-real-time visibility ask, layer 2): scan-run volume over time -->
+    <div class="lane-card" style="margin:20px 0;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+            <div class="lane-name" style="margin:0;">Scan runs over time</div>
+            <div class="range-selector" style="display:flex;gap:6px;">
+                <button type="button" class="range-btn" data-range="1h">Last hour</button>
+                <button type="button" class="range-btn active" data-range="1w">Last week</button>
+                <button type="button" class="range-btn" data-range="2w">Last 2 weeks</button>
+                <button type="button" class="range-btn" data-range="1mo">Last month</button>
+            </div>
+        </div>
+        <div style="position:relative;height:280px;">
+            <canvas id="scanRunsChart"></canvas>
+        </div>
+        <div id="scanRunsChartMeta" style="font-size:11px;color:var(--gray-400);margin-top:8px;"></div>
+        <div id="scanRunsFailureDetail" style="display:none;margin-top:14px;padding:12px 14px;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;font-size:12px;"></div>
+    </div>
+
     <!-- Panel 2: stuck runs (the would've-caught-the-stall panel) -->
     {% if data.v2.stuck_runs %}
     <div class="lane-card error" style="margin-bottom:20px;">
@@ -320,7 +341,7 @@ function acknowledgeAlert(alertId) {
             <tbody>
             {% for r in data.v2.stuck_runs %}
                 <tr style="border-top:1px solid var(--gray-100);">
-                    <td style="padding:8px;">{{ r.domain_id }}</td><td style="padding:8px;">{{ r.enqueued_count }}</td>
+                    <td style="padding:8px;">{{ r.domain_name }}</td><td style="padding:8px;">{{ r.enqueued_count }}</td>
                     <td style="padding:8px;">{{ r.fetched_count }}</td><td style="padding:8px;">{{ r.analyzed_count }}</td>
                     <td style="padding:8px;color:var(--danger);">{{ r.failed_count }}</td><td style="padding:8px;">{{ r.mins }}</td>
                 </tr>
@@ -348,7 +369,7 @@ function acknowledgeAlert(alertId) {
             <tbody>
             {% for r in data.v2.active_runs %}
                 <tr style="border-top:1px solid var(--gray-100);">
-                    <td style="padding:8px;">{{ r.domain_id }}</td>
+                    <td style="padding:8px;">{{ r.domain_name }}</td>
                     <td style="padding:8px;min-width:90px;">
                         <div style="background:var(--gray-100);border-radius:4px;height:8px;width:80px;overflow:hidden;display:inline-block;vertical-align:middle;">
                             <div style="height:8px;width:{{ r.pct }}%;background:{% if r.is_complete %}var(--success){% else %}var(--primary){% endif %};"></div>
@@ -801,6 +822,140 @@ function acknowledgeAlert(alertId) {
     // Auto-refresh every 60s. Page reload preserves the ?tab= param
     // we set above, so the active tab survives the refresh.
     setTimeout(function() { window.location.reload(); }, 60000);
+})();
+</script>
+<style>
+.range-btn { padding:6px 12px; font-size:12px; border:1px solid var(--gray-200); background:#fff; border-radius:6px; cursor:pointer; color:var(--gray-600); }
+.range-btn.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+.range-btn:hover:not(.active) { background:var(--gray-50); }
+</style>
+<script src="{{ url_for('static', filename='vendor/chartjs/chart.umd.min.js') }}"></script>
+<script>
+(function(){
+  const el = document.getElementById('scanRunsChart');
+  if (!el) return;
+  const ctx = el.getContext('2d');
+  const detailEl = document.getElementById('scanRunsFailureDetail');
+  let chart = null;
+  let currentRange = '1w';
+  let currentBuckets = [];
+  let currentFailCounts = [];
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // 2026-09-24 (Eric's feedback): stacked bar, not 3 overlapping lines -- 'runs started'
+  // used to sit on top of and hide 'completed' since started >= completed almost always.
+  // Stacking makes every category visible at once, and a bar's TOTAL height now honestly
+  // reflects run volume -- a quiet bucket (short/empty bar) reads as visually distinct from
+  // an all-clean bucket (tall, all-green bar), which a 3-line chart could never show.
+  function render(payload) {
+    currentBuckets = payload.buckets;
+    // 2026-09-24 (Eric's follow-up): "completed" doesn't tell you if it was total loss or
+    // partial -- split into two severities so a bar's red isn't ambiguous. Both count as
+    // "has failures" for click/hover purposes, hence the sum here.
+    currentFailCounts = payload.partial.map((v, i) => v + payload.total_failure[i]);
+    if (chart) { chart.destroy(); }
+    chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: payload.buckets,
+        datasets: [
+          { label: 'Completed clean', data: payload.clean, backgroundColor: '#10b981', stack: 's' },
+          { label: 'Partial failure (some platforms ok)', data: payload.partial, backgroundColor: '#f59e0b', stack: 's' },
+          { label: 'Total failure (all platforms failed)', data: payload.total_failure, backgroundColor: '#dc2626', stack: 's' },
+          { label: 'Still in progress', data: payload.in_progress, backgroundColor: '#9ca3af', stack: 's' },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', axis: 'x', intersect: false },
+        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
+        scales: {
+          y: { stacked: true, title: { display: true, text: 'Scan runs' }, min: 0, ticks: { precision: 0 } },
+          x: { stacked: true, ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+        },
+        onClick: (evt, elements) => {
+          if (!elements.length) return;
+          const idx = elements[0].index;
+          showFailureDetail(idx);
+        },
+        onHover: (evt, elements) => {
+          evt.native.target.style.cursor = elements.length && currentFailCounts[elements[0].index] > 0 ? 'pointer' : 'default';
+        },
+      },
+    });
+    document.getElementById('scanRunsChartMeta').textContent =
+      payload.label + ' — ' + payload.buckets.length + ' data point(s). Click any bar to see what failed in that window.';
+    detailEl.style.display = 'none';
+  }
+
+  // 2026-09-24 (Eric's other feedback): "when there are failures, how do I know what they
+  // were? Is it fair to assume [a dip back to baseline means] failures were cured?" -- no,
+  // it wasn't knowable before this. Pulls the REAL failure_summary JSON already captured per
+  // scan run (per-platform reason/count) via the new /failures endpoint -- same [start,end)
+  // bucket window the chart itself used, computed server-side so it can't drift from what's
+  // actually plotted.
+  function showFailureDetail(idx) {
+    const bucket = currentBuckets[idx];
+    if (currentFailCounts[idx] === 0) {
+      detailEl.style.display = 'block';
+      detailEl.innerHTML = '<strong>' + escapeHtml(bucket) + '</strong> — no failed runs in this window.';
+      return;
+    }
+    detailEl.style.display = 'block';
+    detailEl.innerHTML = 'Loading failures for ' + escapeHtml(bucket) + '…';
+    fetch('/api/operations/scan-runs/failures?range=' + encodeURIComponent(currentRange) + '&bucket=' + encodeURIComponent(bucket))
+      .then(r => r.json())
+      .then(payload => {
+        if (payload.error) { detailEl.innerHTML = 'Could not load failure detail: ' + escapeHtml(payload.error); return; }
+        if (!payload.runs.length) { detailEl.innerHTML = '<strong>' + escapeHtml(bucket) + '</strong> — no failed runs found (may have completed just outside this window).'; return; }
+        let html = '<strong>Failed runs — ' + escapeHtml(bucket) + '</strong> (' + payload.runs.length + ')<div style="margin-top:8px;display:flex;flex-direction:column;gap:10px;">';
+        payload.runs.forEach(run => {
+          const platformLines = Object.entries(run.platforms || {})
+            .map(([p, info]) => escapeHtml(p) + ': ' + (info.count || '?') + '× "' + escapeHtml(info.reason || 'unknown') + '"')
+            .join('<br>');
+          // 2026-09-24: "completed" alone doesn't say total-loss vs partial -- show the real
+          // fraction (enqueued_count/fetched_count, same columns the chart's own severity
+          // split uses) so the two cases can never be confused in the drill-down either.
+          const isTotal = run.severity === 'total';
+          const sevColor = isTotal ? '#dc2626' : '#d97706';
+          const sevLabel = isTotal ? 'TOTAL FAILURE' : 'partial failure';
+          const fraction = run.enqueued_count ? (run.failed_count + ' of ' + run.enqueued_count + ' platforms failed') : (run.failed_count + ' failed');
+          html += '<div style="padding:8px 10px;background:#fff;border:1px solid var(--gray-200);border-radius:6px;border-left:3px solid ' + sevColor + ';">' +
+            '<div><strong>' + escapeHtml(run.domain) + '</strong> — <span style="color:' + sevColor + ';font-weight:600;">' + sevLabel + '</span>, ' + fraction + ' <span style="color:var(--gray-400);">(' + escapeHtml(run.started_at) + ')</span></div>' +
+            (platformLines ? '<div style="margin-top:4px;color:var(--gray-600);">' + platformLines + '</div>' : '') +
+            '</div>';
+        });
+        html += '</div>';
+        detailEl.innerHTML = html;
+      })
+      .catch(e => { detailEl.innerHTML = 'Could not load failure detail: ' + escapeHtml(String(e)); });
+  }
+
+  function load(range) {
+    currentRange = range;
+    fetch('/api/operations/scan-runs/timeseries?range=' + encodeURIComponent(range))
+      .then(r => r.json())
+      .then(payload => {
+        if (payload.error) {
+          document.getElementById('scanRunsChartMeta').textContent = 'Chart data unavailable: ' + payload.error;
+          return;
+        }
+        render(payload);
+      });
+  }
+
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      load(btn.dataset.range);
+    });
+  });
+
+  load('1w');
 })();
 </script>
 {% endblock %}

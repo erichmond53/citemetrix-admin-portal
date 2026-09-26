@@ -300,9 +300,9 @@ CRON_STALENESS_CHECKS = [
     {'name': 'Deliverability', 'log': 'reports/deliverability/cron.log', 'stale_after_min': 30 * 60, 'link': '/marketing/measure/deliverability', 'link_label': 'Measure → Deliverability'},
     {'name': 'Blacklist / reputation', 'log': '/home/ubuntu/blacklist.log', 'stale_after_min': 30 * 60, 'link': '/marketing/measure/deliverability', 'link_label': 'Measure → Deliverability'},
     {'name': 'Messaging platform health', 'log': 'reports/messaging/cron.log', 'stale_after_min': 30, 'link': '/operations', 'link_label': 'Product Jobs'},
-    {'name': 'Drip campaign sends', 'log': 'reports/drip/cron.log', 'stale_after_min': 180, 'link': '/marketing/drip-campaigns', 'link_label': 'Sequences'},
-    {'name': 'Lead migration sync', 'log': 'reports/migrations/cron.log', 'stale_after_min': 180, 'link': '/marketing/leads', 'link_label': 'Leads'},
-    {'name': 'Duplicate detector', 'log': 'reports/dedupe/cron.log', 'stale_after_min': 180, 'link': '/marketing/leads', 'link_label': 'Leads'},
+    {'name': 'Drip campaign sends', 'log': 'reports/drip/cron.log', 'stale_after_min': 180, 'link': '/marketing/automations', 'link_label': 'Automations'},
+    {'name': 'Lead migration sync', 'log': 'reports/migrations/cron.log', 'stale_after_min': 180, 'link': '/marketing/lists', 'link_label': 'Lists'},
+    {'name': 'Duplicate detector', 'log': 'reports/dedupe/cron.log', 'stale_after_min': 180, 'link': '/marketing/lists', 'link_label': 'Lists'},
 ]
 
 
@@ -328,8 +328,8 @@ def _check_stale_jobs():
 # cron_run_log (written by both jobs every run, see their own _log_run/summary blocks)
 # carries a total_problem count precisely so a job that's ALIVE but WRONG shows up here too.
 JOB_ANOMALY_LINKS = {
-    'drip_cron': {'name': 'Drip campaign sends', 'link': '/marketing/drip-campaigns', 'link_label': 'Sequences'},
-    'lead_migration_sync': {'name': 'Lead migration sync', 'link': '/marketing/leads', 'link_label': 'Leads'},
+    'drip_cron': {'name': 'Drip campaign sends', 'link': '/marketing/automations', 'link_label': 'Automations'},
+    'lead_migration_sync': {'name': 'Lead migration sync', 'link': '/marketing/lists', 'link_label': 'Lists'},
 }
 
 
@@ -1760,14 +1760,16 @@ def operations():
         with conn.cursor() as cursor:
             # Panel 1 — active/recent runs (last 6h), newest first.
             cursor.execute(
-                "SELECT id, domain_id, scan_type, enqueued_count, fetched_count, "
-                "       analyzed_count, failed_count, "
-                "       (fetched_count + failed_count) AS terminal, "
-                "       started_at, completed_at, failure_summary, "
-                "       TIMESTAMPDIFF(MINUTE, started_at, COALESCE(completed_at, NOW())) AS mins "
-                "FROM wp_citemetrix_scan_runs "
-                "WHERE started_at >= DATE_SUB(NOW(), INTERVAL 6 HOUR) "
-                "ORDER BY started_at DESC LIMIT 50"
+                "SELECT sr.id, sr.domain_id, COALESCE(d.domain, CONCAT('domain #', sr.domain_id)) AS domain_name, "
+                "       sr.scan_type, sr.enqueued_count, sr.fetched_count, "
+                "       sr.analyzed_count, sr.failed_count, "
+                "       (sr.fetched_count + sr.failed_count) AS terminal, "
+                "       sr.started_at, sr.completed_at, sr.failure_summary, "
+                "       TIMESTAMPDIFF(MINUTE, sr.started_at, COALESCE(sr.completed_at, NOW())) AS mins "
+                "FROM wp_citemetrix_scan_runs sr "
+                "LEFT JOIN wp_citemetrix_domains d ON d.id = sr.domain_id "
+                "WHERE sr.started_at >= DATE_SUB(NOW(), INTERVAL 6 HOUR) "
+                "ORDER BY sr.started_at DESC LIMIT 50"
             )
             for r in cursor.fetchall():
                 enq = int(r['enqueued_count'] or 0)
@@ -1781,13 +1783,15 @@ def operations():
             # Same logic as scheduler sweep_stuck_runs — the "would've caught
             # the overnight stall" panel.
             cursor.execute(
-                "SELECT id, domain_id, enqueued_count, fetched_count, analyzed_count, "
-                "       failed_count, started_at, "
-                "       TIMESTAMPDIFF(MINUTE, started_at, NOW()) AS mins "
-                "FROM wp_citemetrix_scan_runs "
-                "WHERE completed_at IS NULL "
-                "  AND started_at < DATE_SUB(NOW(), INTERVAL %s MINUTE) "
-                "ORDER BY started_at ASC LIMIT 50",
+                "SELECT sr.id, sr.domain_id, COALESCE(d.domain, CONCAT('domain #', sr.domain_id)) AS domain_name, "
+                "       sr.enqueued_count, sr.fetched_count, sr.analyzed_count, "
+                "       sr.failed_count, sr.started_at, "
+                "       TIMESTAMPDIFF(MINUTE, sr.started_at, NOW()) AS mins "
+                "FROM wp_citemetrix_scan_runs sr "
+                "LEFT JOIN wp_citemetrix_domains d ON d.id = sr.domain_id "
+                "WHERE sr.completed_at IS NULL "
+                "  AND sr.started_at < DATE_SUB(NOW(), INTERVAL %s MINUTE) "
+                "ORDER BY sr.started_at ASC LIMIT 50",
                 (STUCK_THRESHOLD_MIN,)
             )
             v2['stuck_runs'] = cursor.fetchall()
@@ -1898,12 +1902,149 @@ def operations():
         infra['error'] = f"{type(_e).__name__}: {str(_e)[:200]}"
     data['infra'] = infra
 
+    # 2026-09-24 (near-real-time visibility ask, layer 1): explicit render-time timestamp --
+    # every panel above (fetcher fleet, queue depths, completion stats) is a live AWS/DB read
+    # at page-load, but nothing on the page said so. Same fix as the AI Platform APIs page.
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute("SELECT NOW() n")
+            data['now_utc'] = cur.fetchone()['n']
+    except Exception:
+        data['now_utc'] = None
+
     try:
         import json as _mjson, os as _mos
         messaging = _mjson.load(open(_mos.path.join(_mos.path.dirname(_mos.path.abspath(__file__)), 'reports', 'messaging', 'health.json')))
     except Exception:
         messaging = None
     return render_template('operations/index.html', data=data, messaging=messaging)
+
+
+# 2026-09-24 (near-real-time visibility ask, layer 2): range-aware scan-run volume time
+# series for the Product Jobs page -- same pattern/bucket widths as the AI Platform APIs
+# timeseries endpoint, aggregated on-the-fly from wp_citemetrix_scan_runs (bucketed by
+# started_at), no new rollup pipeline.
+# 2026-09-24 (Eric's chart feedback): 'Runs started' as a 3rd overlapping line always sat
+# on top of/hid 'Completed', since started >= completed for almost every bucket -- and there
+# was no way to tell "quiet period" from "failures that got resolved" apart, since both look
+# like the red line dipping back to baseline. Replaced runs/completed/with_failures (which
+# overlapped because completed_at IS NOT NULL doesn't exclude failed runs) with 3 MUTUALLY
+# EXCLUSIVE counts -- every run lands in exactly one bucket-category, so a stacked bar's total
+# height is always the true run count, and a quiet bucket (short/empty bar) is now visually
+# distinct from an all-clean bucket (tall, all-green bar) -- the exact ambiguity Eric flagged.
+# bucket_seconds is returned so the frontend can compute a clicked bar's [start, end) without
+# re-deriving bucket width from the range string.
+PRODUCT_JOBS_RANGES = {
+    '1h':  {'interval': 'INTERVAL 1 HOUR',  'bucket_expr': "FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(started_at)/300)*300)", 'label': 'Last hour',     'bucket_seconds': 300,   'bucket_fmt': '%Y-%m-%d %H:%i:%s'},
+    '1w':  {'interval': 'INTERVAL 7 DAY',   'bucket_expr': "DATE_FORMAT(started_at, '%Y-%m-%d %H:00:00')", 'label': 'Last week',     'bucket_seconds': 3600,  'bucket_fmt': '%Y-%m-%d %H:%i:%s'},
+    '2w':  {'interval': 'INTERVAL 14 DAY',  'bucket_expr': "DATE_FORMAT(started_at, '%Y-%m-%d %H:00:00')", 'label': 'Last 2 weeks',  'bucket_seconds': 3600,  'bucket_fmt': '%Y-%m-%d %H:%i:%s'},
+    '1mo': {'interval': 'INTERVAL 30 DAY',  'bucket_expr': "DATE(started_at)", 'label': 'Last month', 'bucket_seconds': 86400, 'bucket_fmt': '%Y-%m-%d'},
+}
+
+
+@app.route('/api/operations/scan-runs/timeseries')
+@login_required
+@role_required('admin', 'operations')
+def api_operations_scan_runs_timeseries():
+    rng = request.args.get('range', '1w')
+    cfg = PRODUCT_JOBS_RANGES.get(rng, PRODUCT_JOBS_RANGES['1w'])
+    result = {
+        'range': rng, 'label': cfg['label'], 'bucket_seconds': cfg['bucket_seconds'],
+        'buckets': [], 'clean': [], 'partial': [], 'total_failure': [], 'in_progress': [],
+    }
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {cfg['bucket_expr']} AS bucket, "
+                f"SUM(completed_at IS NOT NULL AND failed_count = 0) clean, "
+                # Eric's follow-up (2026-09-24): "completed" only means the run's platform
+                # fetches all resolved (fetched+failed >= enqueued per fetcher.py's
+                # check_and_complete) -- it says nothing about how many succeeded. A run where
+                # EVERY platform failed and one where only one of eight did were both landing
+                # in the same red "with_failures" bucket. Split on fetched_count (the real
+                # per-platform success count, a direct column on this table -- confirmed via
+                # fetcher.py's own completion-check SELECT) so a total loss is distinguishable
+                # from a partial one, both on the chart and in the drill-down.
+                f"SUM(completed_at IS NOT NULL AND failed_count > 0 AND fetched_count > 0) partial, "
+                f"SUM(completed_at IS NOT NULL AND failed_count > 0 AND fetched_count = 0) total_fail, "
+                f"SUM(completed_at IS NULL) prog "
+                f"FROM wp_citemetrix_scan_runs WHERE started_at >= DATE_SUB(NOW(), {cfg['interval']}) "
+                f"GROUP BY bucket ORDER BY bucket ASC"
+            )
+            rows = cur.fetchall()
+        conn.close()
+        for r in rows:
+            result['buckets'].append(str(r['bucket']))
+            result['clean'].append(int(r['clean'] or 0))
+            result['partial'].append(int(r['partial'] or 0))
+            result['total_failure'].append(int(r['total_fail'] or 0))
+            result['in_progress'].append(int(r['prog'] or 0))
+    except Exception as e:
+        result['error'] = str(e)
+    return jsonify(result)
+
+
+@app.route('/api/operations/scan-runs/failures')
+@login_required
+@role_required('admin', 'operations')
+def api_operations_scan_runs_failures():
+    """2026-09-24: drill-down for a clicked 'with failures' bar segment -- Eric's other
+    piece of feedback, "when there are failures, how do I know what they were?" Takes the
+    same range+bucket the timeseries endpoint returned so the [start, end) window is computed
+    identically on both ends (STR_TO_DATE using each range's own bucket_fmt), not re-derived
+    from a JS-parsed date. Surfaces the REAL failure_summary JSON already written per run
+    (per-platform reason/count) -- e.g. domain 18's 9/24 06:10 run: {"chatgpt": {"reason":
+    "dead-lettered after max retries", "count": 43}, ...} -- no new reason-tracking needed,
+    this data already exists per run."""
+    rng = request.args.get('range', '1w')
+    bucket = request.args.get('bucket', '')
+    cfg = PRODUCT_JOBS_RANGES.get(rng, PRODUCT_JOBS_RANGES['1w'])
+    result = {'range': rng, 'bucket': bucket, 'runs': []}
+    if not bucket:
+        result['error'] = 'bucket required'
+        return jsonify(result)
+    # pymysql substitutes %s params via query % params -- any OTHER literal '%' in the SQL
+    # text (MySQL's own %Y/%m/%d/%H/%i/%s date-format specifiers inside STR_TO_DATE) collides
+    # with that and must be escaped to %% first. Same bug class the AI Platform APIs
+    # timeseries endpoint hit earlier today; caught this time via the browser verification
+    # screenshot showing "unsupported format character 'Y'" instead of guessing it was fine.
+    bucket_fmt_escaped = cfg['bucket_fmt'].replace('%', '%%')
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT sr.id, sr.domain_id, d.domain, sr.started_at, sr.completed_at, "
+                f"sr.failed_count, sr.enqueued_count, sr.fetched_count, sr.failure_summary "
+                f"FROM wp_citemetrix_scan_runs sr LEFT JOIN wp_citemetrix_domains d ON d.id = sr.domain_id "
+                f"WHERE sr.failed_count > 0 "
+                f"AND sr.started_at >= STR_TO_DATE(%s, '{bucket_fmt_escaped}') "
+                f"AND sr.started_at < DATE_ADD(STR_TO_DATE(%s, '{bucket_fmt_escaped}'), INTERVAL {cfg['bucket_seconds']} SECOND) "
+                f"ORDER BY sr.started_at DESC LIMIT 50",
+                (bucket, bucket)
+            )
+            rows = cur.fetchall()
+        conn.close()
+        for r in rows:
+            platforms = {}
+            try:
+                platforms = json.loads(r['failure_summary']) if r['failure_summary'] else {}
+            except (ValueError, TypeError):
+                platforms = {}
+            enq = int(r.get('enqueued_count') or 0)
+            fet = int(r.get('fetched_count') or 0)
+            failed = int(r['failed_count'] or 0)
+            result['runs'].append({
+                'id': r['id'], 'domain': r.get('domain') or f"domain #{r['domain_id']}",
+                'started_at': str(r['started_at']), 'completed_at': str(r['completed_at']) if r['completed_at'] else None,
+                'failed_count': failed, 'enqueued_count': enq, 'fetched_count': fet,
+                'severity': 'total' if fet == 0 and failed > 0 else 'partial',
+                'platforms': platforms,
+            })
+    except Exception as e:
+        result['error'] = str(e)
+    return jsonify(result)
 
 
 def _compute_cs_alerts():
@@ -6243,6 +6384,43 @@ def marketing_drip_leads():
     return redirect(url_for('marketing_leads', path='direct'), code=301)
 
 
+# marblism-weekly-import-auto-enroll-spec-2026-09-23.md SS3: persona slug -> the tag a
+# weekly Marblism batch gets stamped with, the saved segment that tag backs, and the cold
+# automation that segment enrolls into. Created once (setup_marblism_segments.py, 2026-09-23)
+# -- tags 13/14/15, segments 3/4/5. Automation ids match the existing 3 cold personas
+# (9/10/11), same ones the hero-image email work this session already used by name.
+MARBLISM_PERSONA_MAP = {
+    'brand':     {'label': 'Brand & SMB Marketing Leaders',    'tag': 'marblism-brand',     'segment_id': 3, 'automation_id': 9},
+    'acfl':      {'label': 'Agency Client-Facing Leadership',  'tag': 'marblism-acfl',      'segment_id': 4, 'automation_id': 10},
+    'principal': {'label': 'Agency Principals',                'tag': 'marblism-principal', 'segment_id': 5, 'automation_id': 11},
+}
+
+
+@app.route('/api/drip-leads/enroll-segment', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_drip_leads_enroll_segment():
+    """One click, same session as the upload (marblism-weekly-import-auto-enroll-spec.md
+    SS2b Option A) -- deliberately not automatic-on-upload, matching this list type's existing
+    NeverBounce policy of never spending verification/send budget without a human looking at
+    it first. enroll_segment() re-evaluates the segment live (tag membership), so calling this
+    again later (e.g. after verifying) only picks up leads not already enrolled -- safe to
+    re-run, not just safe to click once."""
+    import leads_drip
+    d = request.get_json() or {}
+    persona = (d.get('persona') or '').strip()
+    mapping = MARBLISM_PERSONA_MAP.get(persona)
+    if not mapping:
+        return jsonify({'error': 'Unknown persona.'}), 400
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            result = leads_drip.enroll_segment(cur, conn, mapping['automation_id'], mapping['segment_id'])
+    finally:
+        conn.close()
+    return jsonify({'success': True, 'persona': persona, **result})
+
+
 @app.route('/api/drip-leads/upload', methods=['POST'])
 @login_required
 @role_required('admin', 'marketing')
@@ -6261,11 +6439,12 @@ def api_drip_leads_upload():
         rows = leads_drip.parse_leads_csv(f.read())
         if not rows:
             return jsonify({'error': 'No valid rows found (need at least an email column).'}), 400
+        tag_names = [t.strip() for t in (request.form.get('tags') or '').split(',') if t.strip()]
 
         conn = get_admin_db()
         try:
             with conn.cursor() as cur:
-                result = leads_drip.import_batch(cur, conn, batch_name, source, current_user.id, rows, path=path)
+                result = leads_drip.import_batch(cur, conn, batch_name, source, current_user.id, rows, path=path, tag_names=tag_names)
         finally:
             conn.close()
         return jsonify({'success': True, **result})
@@ -6292,11 +6471,12 @@ def api_leads_add_single():
         event_name = (request.form.get('event_name') or '').strip()[:255]
         if not email or '@' not in email:
             return jsonify({'error': 'A valid email is required.'}), 400
+        tag_names = [t.strip() for t in (request.form.get('tags') or '').split(',') if t.strip()]
 
         conn = get_admin_db()
         try:
             with conn.cursor() as cur:
-                result = leads_drip.add_single_lead(cur, conn, email, first_name, last_name, company, path, event_name, current_user.id)
+                result = leads_drip.add_single_lead(cur, conn, email, first_name, last_name, company, path, event_name, current_user.id, tag_names=tag_names)
         finally:
             conn.close()
         return jsonify({'success': True, **result})
@@ -6396,322 +6576,16 @@ def api_leads_verify_status():
         conn.close()
 
 
-@app.route('/marketing/drip-campaigns')
-@login_required
-@role_required('admin', 'marketing')
-def marketing_drip_campaigns():
-    conn = get_admin_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""SELECT c.*, b.label AS batch_name,
-                                  (SELECT COUNT(*) FROM drip_enrollments e WHERE e.campaign_id=c.id) AS enrolled_count,
-                                  (SELECT COUNT(*) FROM drip_enrollments e WHERE e.campaign_id=c.id AND e.status='active') AS active_count,
-                                  (SELECT COUNT(*) FROM drip_enrollments e WHERE e.campaign_id=c.id AND e.status='completed') AS completed_count,
-                                  (SELECT COUNT(*) FROM drip_steps s WHERE s.campaign_id=c.id) AS step_count,
-                                  (SELECT COUNT(*) FROM drip_send_log dl INNER JOIN drip_enrollments e ON e.id=dl.enrollment_id WHERE e.campaign_id=c.id AND dl.status='sent') AS sent_count,
-                                  (SELECT COUNT(*) FROM drip_send_log dl INNER JOIN drip_enrollments e ON e.id=dl.enrollment_id WHERE e.campaign_id=c.id AND dl.opened_at IS NOT NULL) AS opened_count,
-                                  (SELECT COUNT(*) FROM drip_enrollments e WHERE e.campaign_id=c.id AND e.status='blocked') AS blocked_count
-                           FROM drip_campaigns c LEFT JOIN source_refs b ON b.id=c.batch_id AND b.kind='import_batch'
-                           ORDER BY c.created_at DESC""")
-            campaigns = cur.fetchall()
-            cur.execute("SELECT id, label AS name, new_count FROM source_refs WHERE kind='import_batch' ORDER BY created_at DESC")
-            batches = cur.fetchall()
-    finally:
-        conn.close()
-    return render_template('marketing/drip_campaigns.html', campaigns=campaigns, batches=batches)
-
-
-@app.route('/marketing/drip-campaigns/<int:campaign_id>')
-@login_required
-@role_required('admin', 'marketing')
-def marketing_drip_campaign_detail(campaign_id):
-    conn = get_admin_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT c.*, b.label AS batch_name FROM drip_campaigns c LEFT JOIN source_refs b ON b.id=c.batch_id AND b.kind='import_batch' WHERE c.id=%s", (campaign_id,))
-            campaign = cur.fetchone()
-            if not campaign:
-                return "Campaign not found", 404
-            cur.execute("SELECT * FROM drip_steps WHERE campaign_id=%s ORDER BY step_order ASC", (campaign_id,))
-            steps = cur.fetchall()
-            cur.execute("""SELECT s.step_order,
-                                  COUNT(DISTINCT CASE WHEN e.current_step >= s.step_order THEN e.id END) AS reached,
-                                  (SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=s.id AND dl.status='sent') AS sent_count,
-                                  (SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=s.id AND dl.opened_at IS NOT NULL) AS opened_count,
-                                  (SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=s.id AND dl.clicked_at IS NOT NULL) AS clicked_count
-                           FROM drip_steps s LEFT JOIN drip_enrollments e ON e.campaign_id=s.campaign_id
-                           WHERE s.campaign_id=%s GROUP BY s.id ORDER BY s.step_order ASC""", (campaign_id,))
-            funnel = cur.fetchall()
-            cur.execute("""SELECT status, COUNT(*) AS n FROM drip_enrollments WHERE campaign_id=%s GROUP BY status""", (campaign_id,))
-            status_counts = {r['status']: r['n'] for r in cur.fetchall()}
-            # CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS5.1: the reason a send was
-            # blocked/suppressed has always been in drip_send_log.error -- this is what makes
-            # it visible on the campaign page instead of requiring a direct DB query to find,
-            # which is how this sat unnoticed for over a month. One row per lead, most recent
-            # first; verbatim error text, not summarized.
-            cur.execute(
-                """SELECT l.id AS lead_id, l.email, e.status AS enr_status, s.error, s.sent_at
-                   FROM drip_enrollments e
-                   JOIN leads l ON l.id = e.lead_id
-                   JOIN drip_send_log s ON s.enrollment_id = e.id
-                   WHERE e.campaign_id = %s AND e.status IN ('blocked','suppressed')
-                     AND s.status IN ('blocked','suppressed')
-                   ORDER BY s.sent_at DESC LIMIT 50""",
-                (campaign_id,)
-            )
-            blocked_leads = cur.fetchall()
-            cur.execute("SELECT id, label AS name, new_count FROM source_refs WHERE kind='import_batch' ORDER BY created_at DESC")
-            batches = cur.fetchall()
-    finally:
-        conn.close()
-    return render_template('marketing/drip_campaign_detail.html', campaign=campaign, steps=steps, funnel=funnel, status_counts=status_counts, blocked_leads=blocked_leads, batches=batches)
-
-
-@app.route('/api/drip/campaigns', methods=['POST'])
-@login_required
-@role_required('admin', 'marketing')
-def api_drip_create_campaign():
-    try:
-        d = request.get_json() or {}
-        name = (d.get('name') or '').strip()
-        if not name:
-            return jsonify({'error': 'Campaign name is required.'}), 400
-        conn = get_admin_db()
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO drip_campaigns (name, description, created_by) VALUES (%s,%s,%s)",
-                (name, (d.get('description') or '')[:2000], current_user.id)
-            )
-            conn.commit()
-            campaign_id = cur.lastrowid
-        conn.close()
-        return jsonify({'success': True, 'campaign_id': campaign_id})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/drip/campaigns/<int:campaign_id>/steps', methods=['POST'])
-@login_required
-@role_required('admin', 'marketing')
-def api_drip_save_step(campaign_id):
-    try:
-        import leads_drip
-        d = request.get_json() or {}
-        step_id = d.get('step_id')
-        day_offset = int(d.get('day_offset', 0))
-        subject = (d.get('subject') or '')[:500]
-        body = d.get('body') or ''
-        is_survey_step = 1 if d.get('is_survey_step') else 0
-        survey_epoch = (d.get('survey_epoch') or '')[:10]
-        # CTA: cta_key must match a utm_campaign key defined in the WP plugin's ANGLE_COPY
-        # (the /check/ message-match system) so the click-through lands on copy that
-        # continues this email's pitch -- see leads_drip.build_cta()'s docstring. Free-typed
-        # on purpose, not validated against a hardcoded list here (see that docstring for why).
-        cta_text = (d.get('cta_text') or '').strip()[:255]
-        cta_key = (d.get('cta_key') or '').strip()[:100]
-        # On-page title/copy: what /check/ itself shows when this step's CTA is clicked --
-        # pushed to WP below via leads_drip.push_message_variant() so it's live without a
-        # plugin deploy. Reuses cta_text as the on-page button (Eric's ask was 4 fields, not
-        # 5 -- one button label carries from email to landing page).
-        onpage_title = (d.get('onpage_title') or '').strip()[:500]
-        onpage_copy = (d.get('onpage_copy') or '').strip()
-
-        sync_status, sync_error = None, None
-        if cta_key and cta_text and onpage_title and onpage_copy:
-            push_result = leads_drip.push_message_variant(cta_key, onpage_title, onpage_copy, cta_text)
-            sync_status = 'synced' if push_result['ok'] else 'failed'
-            sync_error = None if push_result['ok'] else push_result['error']
-
-        conn = get_admin_db()
-        with conn.cursor() as cur:
-            if step_id:
-                cur.execute(
-                    "UPDATE drip_steps SET day_offset=%s, subject=%s, body=%s, cta_text=%s, cta_key=%s, "
-                    "onpage_title=%s, onpage_copy=%s, onpage_sync_status=%s, onpage_sync_error=%s, "
-                    "is_survey_step=%s, survey_epoch=%s WHERE id=%s AND campaign_id=%s",
-                    (day_offset, subject, body, cta_text or None, cta_key or None,
-                     onpage_title or None, onpage_copy or None, sync_status, sync_error,
-                     is_survey_step, survey_epoch, step_id, campaign_id)
-                )
-            else:
-                cur.execute("SELECT COALESCE(MAX(step_order),0)+1 AS next_order FROM drip_steps WHERE campaign_id=%s", (campaign_id,))
-                next_order = cur.fetchone()['next_order']
-                cur.execute(
-                    "INSERT INTO drip_steps (campaign_id, step_order, day_offset, subject, body, cta_text, cta_key, "
-                    "onpage_title, onpage_copy, onpage_sync_status, onpage_sync_error, is_survey_step, survey_epoch) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (campaign_id, next_order, day_offset, subject, body, cta_text or None, cta_key or None,
-                     onpage_title or None, onpage_copy or None, sync_status, sync_error, is_survey_step, survey_epoch)
-                )
-            conn.commit()
-        conn.close()
-        return jsonify({'success': True, 'onpage_sync_status': sync_status, 'onpage_sync_error': sync_error})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/drip/steps/<int:step_id>/delete', methods=['POST'])
-@login_required
-@role_required('admin', 'marketing')
-def api_drip_delete_step(step_id):
-    try:
-        conn = get_admin_db()
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM drip_steps WHERE id=%s", (step_id,))
-            conn.commit()
-        conn.close()
-        return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-# Sample lead used by both preview and test-send below — a fake merge-tag context, not a
-# real leads row, so Preview/Send-test work on a step's CURRENT unsaved textarea contents
-# (the copywriter shouldn't have to save first just to see how it reads).
+# Sample lead used by the Emails-table preview/test-send (_render_email_preview and
+# friends around line ~6623) -- a fake merge-tag context, not a real leads row.
+# 2026-09-25: the Drip Campaigns feature (and its own preview/test-send routes,
+# _render_drip_step_preview()) was retired -- superseded by Automations -- but this
+# constant is still used by the separate Emails-table preview path below.
 _DRIP_PREVIEW_LEAD = {
     'first_name': 'Jordan', 'last_name': 'Rivera', 'company': 'Acme Marketing Co.',
     'email': 'jordan@example.com', 'brand_name': 'Acme Marketing Co.', 'model_score': 42,
     'platforms_checked_count': 3, 'platforms_mentioned_count': 1, 'missing_platforms': 'Claude and Perplexity',
 }
-
-
-def _render_drip_step_preview(d):
-    """Shared by /api/drip/preview and /api/drip/test-send: render subject/body/CTA from
-    whatever fields the request sends (unsaved form values, not a stored drip_steps row) --
-    same merge-tag + CTA machinery process_due_enrollments() uses for a real send, so what
-    you preview is what actually goes out. Returns (subject, body, body_html) -- body_html
-    is auto-derived by leads_drip.apply_cta_tags() whenever a CTA is configured (real button,
-    not the plain-text "text: url" fallback), same as a real send now does. See that
-    function's docstring -- this was a real gap caught live 2026-09-04: a test send showed
-    the CTA as plain text because nothing ever supplied a body_html for the button-HTML code
-    to run on."""
-    import leads_drip
-    step = {
-        'cta_text': d.get('cta_text') or '',
-        'cta_key': d.get('cta_key') or '',
-        'step_order': int(d.get('step_order') or 1),
-    }
-    subject = leads_drip.render_merge_tags(d.get('subject') or '', _DRIP_PREVIEW_LEAD)
-    body = leads_drip.render_merge_tags(d.get('body') or '', _DRIP_PREVIEW_LEAD)
-    body, body_html = leads_drip.apply_cta_tags(body, None, step)
-    return subject, body, body_html
-
-
-@app.route('/api/drip/preview', methods=['POST'])
-@login_required
-@role_required('admin', 'marketing')
-def api_drip_preview():
-    try:
-        d = request.get_json() or {}
-        subject, body, body_html = _render_drip_step_preview(d)
-        import leads_drip
-        cta_url, cta_text = leads_drip.build_cta({'cta_key': d.get('cta_key') or '', 'cta_text': d.get('cta_text') or '', 'step_order': int(d.get('step_order') or 1)})
-        return jsonify({'success': True, 'subject': subject, 'body': body, 'body_html': body_html, 'cta_url': cta_url,
-                         'onpage_title': (d.get('onpage_title') or '').strip(),
-                         'onpage_copy': (d.get('onpage_copy') or '').strip(),
-                         'sample_lead': {'first_name': _DRIP_PREVIEW_LEAD['first_name'], 'company': _DRIP_PREVIEW_LEAD['company']}})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/drip/test-send', methods=['POST'])
-@login_required
-@role_required('admin', 'marketing')
-def api_drip_test_send():
-    try:
-        d = request.get_json() or {}
-        to_email = (d.get('to_email') or '').strip()
-        if not to_email or '@' not in to_email:
-            return jsonify({'error': 'Enter a valid email address to send the test to.'}), 400
-        subject, body, body_html = _render_drip_step_preview(d)
-        import leads_drip
-        # A test send has no real lead/enrollment, so no real unsubscribe_token exists --
-        # but a real send always appends one (build_unsubscribe_footer), and Eric asked
-        # specifically why a test send didn't show it. Append the SAME footer structure with
-        # an obviously-fake token, so the test send shows the full, real email shape
-        # (compliance footer included) rather than a stripped-down version that looks
-        # different from what will actually go out.
-        fake_unsub_url = 'https://citemetrix.com/unsubscribe/TEST-TOKEN-NOT-A-REAL-LINK'
-        body += leads_drip.build_unsubscribe_footer(fake_unsub_url)
-        if body_html:
-            body_html += leads_drip.build_unsubscribe_footer_html(fake_unsub_url)
-        disclaimer_text = (
-            "This is a TEST send from the drip campaign builder, not a real enrollment. "
-            "Merge tags above are filled with sample data (Jordan Rivera / Acme Marketing Co.), "
-            "not a real lead. The unsubscribe link above is a placeholder, not real."
-        )
-        body += f"\n\n—\n{disclaimer_text}"
-        if body_html:
-            body_html += (
-                '<p style="margin:24px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;'
-                f'line-height:1.6;color:#8a94a3;border-top:1px solid #e5e7eb;padding-top:16px;">{disclaimer_text}</p>'
-            )
-        import outreach
-        send_kwargs = {
-            'to': to_email, 'subject': f"[TEST] {subject}", 'body_text': body,
-            'from_address': outreach.SES_FROM_ADDRESS, 'configuration_set': outreach.SES_CONFIGURATION_SET,
-        }
-        if body_html:
-            send_kwargs['body_html'] = body_html
-        ok, result = send_email(**send_kwargs)
-        if not ok:
-            return jsonify({'error': f'Send failed: {result}'}), 500
-        return jsonify({'success': True, 'message_id': result})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/drip/campaigns/<int:campaign_id>/enroll', methods=['POST'])
-@login_required
-@role_required('admin', 'marketing')
-def api_drip_enroll(campaign_id):
-    import leads_drip
-    try:
-        d = request.get_json() or {}
-        batch_id = d.get('batch_id')
-        if not batch_id:
-            return jsonify({'error': 'batch_id is required.'}), 400
-        conn = get_admin_db()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) AS n FROM drip_steps WHERE campaign_id=%s", (campaign_id,))
-                if cur.fetchone()['n'] == 0:
-                    return jsonify({'error': 'Add at least one step before enrolling leads.'}), 400
-                enroll_result = leads_drip.enroll_batch(cur, conn, campaign_id, batch_id)
-                cur.execute("UPDATE drip_campaigns SET batch_id=%s WHERE id=%s AND batch_id IS NULL", (batch_id, campaign_id))
-                conn.commit()
-        finally:
-            conn.close()
-        return jsonify({
-                    'success': True,
-                    'enrolled': enroll_result['enrolled'],
-                    'skipped_suppressed': enroll_result['skipped_suppressed'],
-                    'skipped_nurture_owned': enroll_result['skipped_nurture_owned'],
-                    'skipped_cluster_conflict': enroll_result['skipped_cluster_conflict'],
-                })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/drip/campaigns/<int:campaign_id>/toggle', methods=['POST'])
-@login_required
-@role_required('admin', 'marketing')
-def api_drip_toggle_campaign(campaign_id):
-    try:
-        conn = get_admin_db()
-        with conn.cursor() as cur:
-            cur.execute("SELECT active FROM drip_campaigns WHERE id=%s", (campaign_id,))
-            row = cur.fetchone()
-            if not row:
-                return jsonify({'error': 'Not found'}), 404
-            new_active = 0 if row['active'] else 1
-            cur.execute("UPDATE drip_campaigns SET active=%s WHERE id=%s", (new_active, campaign_id))
-            conn.commit()
-        conn.close()
-        return jsonify({'success': True, 'active': bool(new_active)})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 
 @app.route('/api/drip/ses-webhook', methods=['POST'])
 def api_drip_ses_webhook():
@@ -6786,6 +6660,1220 @@ def api_drip_ses_webhook():
     return 'Ignored', 200
 
 
+# ============================================================================
+# Emails library (email-builder-spec-2026-09-21.md SS2.1 / SS3.2 build-order step 1) --
+# the content half of the schema split (SS3.1, shipped 2026-09-22). Standalone: no
+# automation-graph change, no GrapesJS yet (design_json stays NULL/unedited here) --
+# just somewhere real to see and edit the emails table's rows, reusing the exact
+# rendering pipeline process_due_runs() (leads_drip.py) already proved correct against
+# this table shape during the schema split.
+# ============================================================================
+
+def _render_email_preview(d):
+    """Emails-table counterpart to _render_drip_step_preview() above -- same merge-tag +
+    CTA machinery, same "what you preview is what goes out" contract, sourced from posted
+    (possibly unsaved) form fields rather than a stored emails row, exactly like the drip
+    version does for drip_steps. step_order is always 0 here (emails aren't ordered --
+    that's the automation graph's job now, via automation_steps.config's email_id
+    reference); build_cta() only uses step_order for the utm_content query param, so 0 is
+    a safe, honest default until a real graph position is known at preview time."""
+    import leads_drip
+    step = {
+        'cta_text': d.get('cta_text') or '',
+        'cta_key': d.get('cta_key') or '',
+        'step_order': 0,
+    }
+    subject = leads_drip.render_merge_tags(d.get('subject') or '', _DRIP_PREVIEW_LEAD)
+    body = leads_drip.render_merge_tags(d.get('body') or '', _DRIP_PREVIEW_LEAD)
+    body_html_in = leads_drip.render_merge_tags(d.get('body_html') or '', _DRIP_PREVIEW_LEAD) or None
+    body, body_html = leads_drip.apply_cta_tags(body, body_html_in, step)
+    return subject, body, body_html
+
+
+def _email_cta_kind(cta_key):
+    """Same rule migrations/backfill_automations.py used to seed cta_kind on the 21
+    backfilled rows -- build_cta() (leads_drip.py) routes on cta_key.lower()=='book-demo',
+    not on cta_key being NULL. Kept in sync with that constant rather than re-typing the
+    literal, so a future rename of BOOK_DEMO_CTA_KEY can't silently diverge the two."""
+    import leads_drip
+    if cta_key and cta_key.strip().lower() == leads_drip.BOOK_DEMO_CTA_KEY:
+        return 'book_demo'
+    return 'check'
+
+
+def _emails_used_in_subquery_sql():
+    return ("(SELECT GROUP_CONCAT(DISTINCT a.name SEPARATOR ', ') "
+            "FROM automation_steps ast JOIN automations a ON a.id=ast.automation_id "
+            "WHERE ast.node_type='send_email' AND JSON_UNQUOTE(JSON_EXTRACT(ast.config,'$.email_id'))=e.id)")
+
+
+@app.route('/marketing/emails')
+@login_required
+@role_required('admin', 'marketing')
+def marketing_emails():
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            # Sent/opened are additive across both engines' send-log linkage (event-log
+            # data, not a state snapshot -- same reasoning as the dashboard-staleness fix):
+            # dl.step_id=e.legacy_step_id covers historical legacy-engine sends, dl.email_id=e.id
+            # covers new-engine sends (written directly by process_due_runs() since the
+            # schema split shipped).
+            cur.execute(
+                "SELECT e.*, "
+                "(SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=e.legacy_step_id AND dl.status='sent') + "
+                "(SELECT COUNT(*) FROM drip_send_log dl WHERE dl.email_id=e.id AND dl.status='sent') AS sent_count, "
+                "(SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=e.legacy_step_id AND dl.opened_at IS NOT NULL) + "
+                "(SELECT COUNT(*) FROM drip_send_log dl WHERE dl.email_id=e.id AND dl.opened_at IS NOT NULL) AS opened_count, "
+                + _emails_used_in_subquery_sql() + " AS used_in "
+                "FROM emails e ORDER BY e.updated_at DESC"
+            )
+            emails = cur.fetchall()
+    finally:
+        conn.close()
+    return render_template('marketing/emails.html', emails=emails)
+
+
+@app.route('/marketing/emails/<int:email_id>')
+@login_required
+@role_required('admin', 'marketing')
+def marketing_email_detail(email_id):
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM emails WHERE id=%s", (email_id,))
+            email = cur.fetchone()
+            if not email:
+                return "Email not found", 404
+            cur.execute(
+                """SELECT a.id AS automation_id, a.name AS automation_name, ast.node_key
+                   FROM automation_steps ast JOIN automations a ON a.id=ast.automation_id
+                   WHERE ast.node_type='send_email' AND JSON_UNQUOTE(JSON_EXTRACT(ast.config,'$.email_id'))=%s""",
+                (email_id,)
+            )
+            used_in = cur.fetchall()
+            cur.execute(
+                "SELECT "
+                "(SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=%s AND dl.status='sent') + "
+                "(SELECT COUNT(*) FROM drip_send_log dl WHERE dl.email_id=%s AND dl.status='sent') AS sent_count, "
+                "(SELECT COUNT(*) FROM drip_send_log dl WHERE dl.step_id=%s AND dl.opened_at IS NOT NULL) + "
+                "(SELECT COUNT(*) FROM drip_send_log dl WHERE dl.email_id=%s AND dl.opened_at IS NOT NULL) AS opened_count",
+                (email['legacy_step_id'], email_id, email['legacy_step_id'], email_id)
+            )
+            stats = cur.fetchone()
+    finally:
+        conn.close()
+    return render_template('marketing/email_detail.html', email=email, used_in=used_in, stats=stats)
+
+
+@app.route('/api/emails', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_emails_create():
+    try:
+        d = request.get_json() or {}
+        name = (d.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'Email name is required.'}), 400
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO emails (name, subject, status, created_by) VALUES (%s,'','draft',%s)",
+                (name, current_user.id)
+            )
+            conn.commit()
+            email_id = cur.lastrowid
+        conn.close()
+        return jsonify({'success': True, 'email_id': email_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+import uuid as _uuid_mod
+
+ASSET_UPLOAD_DIR = os.path.join(app.root_path, 'static', 'uploads', 'emails')
+ASSET_ALLOWED_EXT = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+ASSET_MAX_BYTES = 2 * 1024 * 1024  # 2MB -- general asset-manager ceiling, more generous than
+                                    # the single-hero-image 200KB guidance (work order SSC.2),
+                                    # which was scoped to one hero image, not arbitrary content
+
+
+def _html_to_plain_text(html_str):
+    """Best-effort HTML -> plain text for the "never let it be empty" guarantee (spec SS1.2)
+    and the Regenerate-from-HTML button -- not a full HTML parser, just enough to turn a
+    GrapesJS-authored email into readable plain text: block-level tags become line breaks,
+    remaining tags are stripped, entities decoded, blank-line runs collapsed."""
+    import re
+    import html as _html
+    text = re.sub(r'(?i)<(br|/p|/div|/tr|/h[1-6])\s*/?>', '\n', html_str or '')
+    text = re.sub(r'<[^>]+>', '', text)
+    text = _html.unescape(text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
+    return text.strip()
+
+
+@app.route('/api/emails/assets/upload', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_emails_assets_upload():
+    """GrapesJS Asset Manager's own expected endpoint shape -- assetManager.upload config
+    posts here, response shape {"data": [urls...]} is what the panel expects back to add
+    the asset to its library. Images only, 2MB cap (ASSET_MAX_BYTES), saved under a random
+    uuid4 filename (never trusts the client's original filename) to
+    static/uploads/emails/, served by Flask's default static route -- no custom serving
+    route needed."""
+    try:
+        os.makedirs(ASSET_UPLOAD_DIR, exist_ok=True)
+        # 2026-09-23: GrapesJS's AssetManager defaults to multiUpload=True with
+        # multiUploadSuffix='[]', so with uploadName='files' (this editor's config) it
+        # actually POSTs the field as 'files[]', not 'files' -- confirmed by reading the
+        # vendored grapes.min.js upload code directly. Checking 'files[]' first is what
+        # makes every real upload from this editor actually match; 'files'/'file' stay as
+        # fallbacks for any caller that isn't GrapesJS's default multi-upload shape.
+        uploaded = (request.files.getlist('files[]') or request.files.getlist('files')
+                    or ([request.files['file']] if 'file' in request.files else []))
+        if not uploaded:
+            return jsonify({'error': 'No file uploaded.'}), 400
+        urls = []
+        for f in uploaded:
+            ext = os.path.splitext(f.filename or '')[1].lower()
+            if ext not in ASSET_ALLOWED_EXT:
+                return jsonify({'error': f'Unsupported file type: {ext or "(none)"}. Allowed: {", ".join(sorted(ASSET_ALLOWED_EXT))}'}), 400
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(0)
+            if size > ASSET_MAX_BYTES:
+                return jsonify({'error': f'{f.filename}: {size} bytes exceeds the {ASSET_MAX_BYTES} byte limit.'}), 400
+            fname = f"{_uuid_mod.uuid4().hex}{ext}"
+            f.save(os.path.join(ASSET_UPLOAD_DIR, fname))
+            urls.append({'src': f'/static/uploads/emails/{fname}'})
+        return jsonify({'data': urls})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+EMAIL_IMAGE_MAX_BYTES = 200 * 1024  # C.2's ~200KB target -- tighter than ASSET_MAX_BYTES' 2MB
+                                     # general upload ceiling, checked here at save time instead
+
+
+def validate_email_content(body_html):
+    """The mechanically-checkable half of the work order's C.2 hero-image acceptance criteria
+    (the other half -- reads correctly with images off, dark-mode backgrounds -- stays human,
+    per §8.4). Runs at SAVE time, not send time: C.2's own words were "reject a save without
+    it", and checking here (rather than per-send) also means an image's byte size is read once
+    from local disk, not re-fetched on every single lead's send. An email with no <img> tags at
+    all skips this entirely -- most emails still won't have a hero image, and this must never
+    block a plain email from saving.
+
+    Images are hosted on admin.citemetrix.com (ASSET_UPLOAD_DIR), not citemetrix.com -- C.2
+    originally said "same domain as the links" (citemetrix.com); the real infrastructure landed
+    on the admin subdomain instead. Validated against our own upload path, not literally
+    "citemetrix.com", since that's what's actually true today -- flagged, not silently papered
+    over, in case that distinction matters to a spam filter someone eventually measures.
+
+    Returns (ok: bool, errors: list[str])."""
+    import re
+    if not body_html or '<img' not in body_html.lower():
+        return True, []
+
+    img_tag_re = re.compile(r'<img\b[^>]*>', re.IGNORECASE)
+    img_attr_re = re.compile(r'([\w-]+)\s*=\s*"([^"]*)"')
+
+    errors = []
+    for img_tag in img_tag_re.findall(body_html):
+        attrs = {k.lower(): v for k, v in img_attr_re.findall(img_tag)}
+        src = attrs.get('src', '')
+        label = src or '(image with no src)'
+
+        if not attrs.get('alt', '').strip():
+            errors.append(f'{label}: missing alt text')
+        if not attrs.get('width'):
+            errors.append(f'{label}: missing a width attribute (Outlook ignores CSS-only sizing)')
+        if not attrs.get('height'):
+            errors.append(f'{label}: missing a height attribute (Outlook ignores CSS-only sizing)')
+
+        local_name = None
+        if src.startswith('/static/uploads/emails/'):
+            local_name = os.path.basename(src)
+        else:
+            m = re.match(r'^https?://admin\.citemetrix\.com/static/uploads/emails/([^?#]+)', src, re.IGNORECASE)
+            if m:
+                local_name = m.group(1)
+        if local_name is None:
+            errors.append(f'{label}: not hosted on our own upload path -- a third-party image host is a spam signal')
+        else:
+            local_path = os.path.join(ASSET_UPLOAD_DIR, local_name)
+            if not os.path.isfile(local_path):
+                errors.append(f'{label}: referenced upload not found on disk')
+            elif os.path.getsize(local_path) > EMAIL_IMAGE_MAX_BYTES:
+                kb = os.path.getsize(local_path) / 1024
+                errors.append(f'{label}: {kb:.0f}KB exceeds the {EMAIL_IMAGE_MAX_BYTES // 1024}KB email-image cap')
+
+    return (len(errors) == 0), errors
+
+
+@app.route('/api/emails/<int:email_id>', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_emails_save(email_id):
+    try:
+        import leads_drip
+        d = request.get_json() or {}
+        name = (d.get('name') or '').strip()[:255]
+        subject = (d.get('subject') or '')[:500]
+        body = d.get('body') or ''
+        # GrapesJS embed (email-builder-spec-2026-09-21.md SS1/SS1.2): body_html/design_json
+        # are optional -- a save from before the canvas was opened (or a non-GrapesJS caller)
+        # simply omits them and behaves exactly as before. body_manual, sent by the frontend,
+        # tracks whether THIS save's plain text came from a human typing directly into the
+        # plain-text box (True) vs. the system's own auto-regenerate-from-HTML (False/absent).
+        body_html = d.get('body_html')
+        design_json = d.get('design_json')
+        body_manual = 1 if d.get('body_manual') else 0
+        # "Never let it be empty" (spec SS1.2), enforced server-side too, not just trusted from
+        # the frontend: an empty plain-text body with real HTML present is always auto-derived,
+        # regardless of what body_manual claims.
+        if not body.strip() and body_html:
+            body = _html_to_plain_text(body_html)
+            body_manual = 0
+        is_survey_step = 1 if d.get('is_survey_step') else 0
+        survey_epoch = (d.get('survey_epoch') or '')[:10]
+        cta_text = (d.get('cta_text') or '').strip()[:255]
+        cta_key = (d.get('cta_key') or '').strip()[:100]
+        cta_kind = _email_cta_kind(cta_key)
+        onpage_title = (d.get('onpage_title') or '').strip()[:500]
+        onpage_copy = (d.get('onpage_copy') or '').strip()
+        status = d.get('status') or 'draft'
+        if status not in ('draft', 'scheduled', 'active', 'completed', 'archived'):
+            return jsonify({'error': f'Invalid status: {status}'}), 400
+        if not name:
+            return jsonify({'error': 'Name is required.'}), 400
+
+        content_ok, content_errors = validate_email_content(body_html)
+        if not content_ok:
+            return jsonify({'error': 'Fix the image(s) before saving: ' + '; '.join(content_errors)}), 400
+
+        # Same on-page sync as the legacy step editor (api_drip_save_step) -- reuses
+        # leads_drip.push_message_variant() unchanged, still keyed off cta_key.
+        sync_status, sync_error = None, None
+        if cta_key and cta_text and onpage_title and onpage_copy:
+            push_result = leads_drip.push_message_variant(cta_key, onpage_title, onpage_copy, cta_text)
+            sync_status = 'synced' if push_result['ok'] else 'failed'
+            sync_error = None if push_result['ok'] else push_result['error']
+
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM emails WHERE id=%s", (email_id,))
+            if not cur.fetchone():
+                conn.close()
+                return jsonify({'error': 'Email not found.'}), 404
+            cur.execute(
+                "UPDATE emails SET name=%s, subject=%s, body_text=%s, body_text_manual=%s, body_html=%s, "
+                "design_json=%s, cta_text=%s, cta_key=%s, cta_kind=%s, "
+                "onpage_title=%s, onpage_copy=%s, onpage_sync_status=%s, onpage_sync_error=%s, "
+                "is_survey_step=%s, survey_epoch=%s, status=%s WHERE id=%s",
+                (name, subject, body, body_manual, body_html, design_json,
+                 cta_text or None, cta_key or None, cta_kind,
+                 onpage_title or None, onpage_copy or None, sync_status, sync_error,
+                 is_survey_step, survey_epoch, status, email_id)
+            )
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'onpage_sync_status': sync_status, 'onpage_sync_error': sync_error})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/emails/<int:email_id>/duplicate', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_emails_duplicate(email_id):
+    """Content-only duplicate -- no automation_steps row created, matching the spec's
+    whole point (an email is reusable/duplicable independent of any sequence). The copy
+    starts 'draft' regardless of the source's status, and is not wired into any
+    automation until a human does that from the (future) automation canvas."""
+    try:
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM emails WHERE id=%s", (email_id,))
+            src = cur.fetchone()
+            if not src:
+                conn.close()
+                return jsonify({'error': 'Email not found.'}), 404
+            cur.execute(
+                "INSERT INTO emails (name, subject, body_text, body_html, cta_text, cta_key, cta_kind, "
+                "onpage_title, onpage_copy, is_survey_step, survey_epoch, status, created_by) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft',%s)",
+                (f"{src['name']} (copy)", src['subject'], src['body_text'], src['body_html'],
+                 src['cta_text'], src['cta_key'], src['cta_kind'], src['onpage_title'], src['onpage_copy'],
+                 src['is_survey_step'], src['survey_epoch'], current_user.id)
+            )
+            conn.commit()
+            new_id = cur.lastrowid
+        conn.close()
+        return jsonify({'success': True, 'email_id': new_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/emails/<int:email_id>/status', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_emails_set_status(email_id):
+    try:
+        d = request.get_json() or {}
+        status = d.get('status')
+        if status not in ('draft', 'scheduled', 'active', 'completed', 'archived'):
+            return jsonify({'error': f'Invalid status: {status}'}), 400
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM emails WHERE id=%s", (email_id,))
+            if not cur.fetchone():
+                conn.close()
+                return jsonify({'error': 'Email not found.'}), 404
+            cur.execute("UPDATE emails SET status=%s WHERE id=%s", (status, email_id))
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/emails/preview', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_emails_preview():
+    try:
+        d = request.get_json() or {}
+        subject, body, body_html = _render_email_preview(d)
+        import leads_drip
+        cta_url, cta_text = leads_drip.build_cta({'cta_key': d.get('cta_key') or '', 'cta_text': d.get('cta_text') or '', 'step_order': 0})
+        return jsonify({'success': True, 'subject': subject, 'body': body, 'body_html': body_html, 'cta_url': cta_url,
+                         'onpage_title': (d.get('onpage_title') or '').strip(),
+                         'onpage_copy': (d.get('onpage_copy') or '').strip(),
+                         'sample_lead': {'first_name': _DRIP_PREVIEW_LEAD['first_name'], 'company': _DRIP_PREVIEW_LEAD['company']}})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/emails/test-send', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_emails_test_send():
+    """Mirrors /api/drip/test-send exactly (same disclaimer-footer pattern, same SES
+    from-address/configuration-set, same sample-data merge tags) -- sourced from posted
+    (possibly unsaved) fields, same reasoning as _render_email_preview()."""
+    try:
+        d = request.get_json() or {}
+        to_email = (d.get('to_email') or '').strip()
+        if not to_email or '@' not in to_email:
+            return jsonify({'error': 'Enter a valid email address to send the test to.'}), 400
+        subject, body, body_html = _render_email_preview(d)
+        import leads_drip
+        fake_unsub_url = 'https://citemetrix.com/unsubscribe/TEST-TOKEN-NOT-A-REAL-LINK'
+        body += leads_drip.build_unsubscribe_footer(fake_unsub_url)
+        if body_html:
+            body_html += leads_drip.build_unsubscribe_footer_html(fake_unsub_url)
+        disclaimer_text = (
+            "This is a TEST send from the Emails library, not a real enrollment. "
+            "Merge tags above are filled with sample data (Jordan Rivera / Acme Marketing Co.), "
+            "not a real lead. The unsubscribe link above is a placeholder, not real."
+        )
+        body += f"\n\n—\n{disclaimer_text}"
+        if body_html:
+            body_html += (
+                '<p style="margin:24px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;'
+                f'line-height:1.6;color:#8a94a3;border-top:1px solid #e5e7eb;padding-top:16px;">{disclaimer_text}</p>'
+            )
+            body_html = leads_drip.wrap_html_document(body_html)
+        import outreach
+        send_kwargs = {
+            'to': to_email, 'subject': f"[TEST] {subject}", 'body_text': body,
+            'from_address': outreach.SES_FROM_ADDRESS, 'configuration_set': outreach.SES_CONFIGURATION_SET,
+        }
+        if body_html:
+            send_kwargs['body_html'] = body_html
+        ok, result = send_email(**send_kwargs)
+        if not ok:
+            return jsonify({'error': f'Send failed: {result}'}), 500
+        return jsonify({'success': True, 'message_id': result})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
+# ============================================================================
+# Automation canvas (email-builder-spec-2026-09-21.md SS2.3/SS3.2 build-order step 4,
+# SS4.1's condition panel, and Eric's own branching answer 2026-09-22) -- a linear-chain,
+# MailPoet-style graph editor over automations/automation_steps. Reuses the walker
+# (_advance_automation_graph, leads_drip.py) and the branching extension
+# (next_automation_id/next_automation_id_alt) already built and tested; this is the UI
+# and CRUD that were the only missing piece.
+# ============================================================================
+
+AUTOMATION_NODE_TYPES = ('delay', 'send_email', 'if_else', 'add_to_list', 'remove_from_list', 'unsubscribe')
+
+
+def _new_node_key():
+    return f"n{_uuid_mod.uuid4().hex[:8]}"
+
+
+def _automation_funnel_counts(cur, automation_id):
+    """Entered -> Processing -> Exited (spec SS2.2's three numbers) from automation_runs
+    directly -- 'Processing' is active/blocked/suppressed (still moving through the
+    graph or recoverably stuck), 'Exited' is completed/unsubscribed/cancelled (done, one
+    way or another). 'Entered' is everyone, ever, including exited -- not a live count of
+    who's currently in, which 'Processing' already covers."""
+    cur.execute(
+        "SELECT "
+        "COUNT(*) AS entered, "
+        "SUM(status IN ('active','blocked','suppressed')) AS processing, "
+        "SUM(status IN ('completed','unsubscribed','cancelled')) AS exited "
+        "FROM automation_runs WHERE automation_id=%s",
+        (automation_id,)
+    )
+    row = cur.fetchone()
+    return {'entered': row['entered'] or 0, 'processing': int(row['processing'] or 0), 'exited': int(row['exited'] or 0)}
+
+
+@app.route('/marketing/automations')
+@login_required
+@role_required('admin', 'marketing')
+def marketing_automations():
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM automations ORDER BY updated_at DESC")
+            automations = cur.fetchall()
+            for a in automations:
+                a.update(_automation_funnel_counts(cur, a['id']))
+    finally:
+        conn.close()
+    return render_template('marketing/automations.html', automations=automations)
+
+
+def _build_automation_chain(nodes_by_key, automation_names, start_key, visited=None):
+    """Walk from start_key through next_node_key until an if_else forks the chain (its
+    own two branches are built recursively and attached, then this chain stops -- each
+    branch continues independently) or the chain simply ends (no next_node_key, or a
+    dangling/already-visited pointer -- the same "stop, don't loop" rule the real walker,
+    _advance_automation_graph in leads_drip.py, uses). Returns a list of node dicts ready
+    for the template to render top-to-bottom."""
+    if visited is None:
+        visited = set()
+    chain = []
+    key = start_key
+    while key and key not in visited:
+        visited.add(key)
+        node = nodes_by_key.get(key)
+        if not node:
+            break
+        entry = dict(node)
+        entry['config'] = json.loads(node['config']) if node.get('config') else {}
+        if node['node_type'] == 'if_else':
+            if node.get('next_automation_id'):
+                entry['true_handoff_name'] = automation_names.get(node['next_automation_id'], f"automation #{node['next_automation_id']}")
+            else:
+                entry['true_branch'] = _build_automation_chain(nodes_by_key, automation_names, node.get('next_node_key'), set(visited))
+            if node.get('next_automation_id_alt'):
+                entry['false_handoff_name'] = automation_names.get(node['next_automation_id_alt'], f"automation #{node['next_automation_id_alt']}")
+            else:
+                entry['false_branch'] = _build_automation_chain(nodes_by_key, automation_names, node.get('next_node_key_alt'), set(visited))
+            chain.append(entry)
+            break
+        chain.append(entry)
+        key = node.get('next_node_key')
+    return chain
+
+
+@app.route('/marketing/automations/<int:automation_id>')
+@login_required
+@role_required('admin', 'marketing')
+def marketing_automation_detail(automation_id):
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM automations WHERE id=%s", (automation_id,))
+            automation = cur.fetchone()
+            if not automation:
+                return "Automation not found", 404
+            cur.execute("SELECT id, name FROM automations WHERE id != %s ORDER BY name", (automation_id,))
+            other_automations = cur.fetchall()
+            cur.execute("SELECT id, name, subject FROM emails WHERE status != 'archived' ORDER BY name")
+            emails = cur.fetchall()
+            cur.execute("SELECT id, name FROM lists ORDER BY name")
+            lists_rows = cur.fetchall()
+            cur.execute("SELECT id, name FROM lead_segments ORDER BY name")
+            segments_rows = cur.fetchall()
+            cur.execute(
+                "SELECT s.*, e.name AS email_name FROM automation_steps s "
+                "LEFT JOIN emails e ON s.node_type='send_email' AND JSON_UNQUOTE(JSON_EXTRACT(s.config,'$.email_id'))=e.id "
+                "WHERE s.automation_id=%s ORDER BY s.id",
+                (automation_id,)
+            )
+            nodes = cur.fetchall()
+            funnel = _automation_funnel_counts(cur, automation_id)
+    finally:
+        conn.close()
+    nodes_by_key = {n['node_key']: n for n in nodes}
+    automation_names = {a['id']: a['name'] for a in other_automations}
+    automation_names[automation_id] = automation['name']
+    trigger = nodes_by_key.get('trigger')
+    chain = _build_automation_chain(nodes_by_key, automation_names, trigger['next_node_key'] if trigger else None)
+    return render_template('marketing/automation_detail.html', automation=automation, nodes=nodes, chain=chain,
+                            other_automations=other_automations, emails=emails, funnel=funnel, lists=lists_rows,
+                            list_names={l['id']: l['name'] for l in lists_rows}, segments=segments_rows)
+
+
+@app.route('/api/automations', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_automations_create():
+    try:
+        d = request.get_json() or {}
+        name = (d.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'Automation name is required.'}), 400
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO automations (name, status, run_once_per_subscriber, trigger_type, created_by) "
+                "VALUES (%s,'draft',1,'batch_enroll',%s)",
+                (name, current_user.id)
+            )
+            automation_id = cur.lastrowid
+            cur.execute(
+                "INSERT INTO automation_steps (automation_id, node_key, node_type, config) VALUES (%s,'trigger','trigger','{}')",
+                (automation_id,)
+            )
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'automation_id': automation_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/automations/<int:automation_id>', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_automations_save(automation_id):
+    try:
+        d = request.get_json() or {}
+        name = (d.get('name') or '').strip()[:255]
+        status = d.get('status') or 'draft'
+        if status not in ('draft', 'active', 'inactive', 'archived'):
+            return jsonify({'error': f'Invalid status: {status}'}), 400
+        if not name:
+            return jsonify({'error': 'Name is required.'}), 400
+        run_once = 1 if d.get('run_once_per_subscriber', True) else 0
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM automations WHERE id=%s", (automation_id,))
+            if not cur.fetchone():
+                conn.close()
+                return jsonify({'error': 'Automation not found.'}), 404
+            cur.execute(
+                "UPDATE automations SET name=%s, status=%s, run_once_per_subscriber=%s WHERE id=%s",
+                (name, status, run_once, automation_id)
+            )
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/automations/<int:automation_id>/status', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_automations_set_status(automation_id):
+    try:
+        d = request.get_json() or {}
+        status = d.get('status')
+        if status not in ('draft', 'active', 'inactive', 'archived'):
+            return jsonify({'error': f'Invalid status: {status}'}), 400
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM automations WHERE id=%s", (automation_id,))
+            if not cur.fetchone():
+                conn.close()
+                return jsonify({'error': 'Automation not found.'}), 404
+            cur.execute("UPDATE automations SET status=%s WHERE id=%s", (status, automation_id))
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/automations/<int:automation_id>/enroll', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_automation_enroll(automation_id):
+    """Segment-based batch enrollment into the NEW engine -- the counterpart to
+    api_drip_enroll() above, which only writes to the legacy drip_enrollments table.
+    Records the segment used on the trigger node's own config (the established,
+    already-live pattern -- see migrations/backfill_automations.py), so the enroll modal
+    can preselect it next time."""
+    import leads_drip
+    try:
+        d = request.get_json() or {}
+        segment_id = d.get('segment_id')
+        if not segment_id:
+            return jsonify({'error': 'segment_id is required.'}), 400
+        conn = get_admin_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS n FROM automation_steps WHERE automation_id=%s AND node_type != 'trigger'",
+                    (automation_id,)
+                )
+                if cur.fetchone()['n'] == 0:
+                    return jsonify({'error': 'Add at least one step before enrolling leads.'}), 400
+                enroll_result = leads_drip.enroll_segment(cur, conn, automation_id, segment_id)
+                cur.execute(
+                    "UPDATE automation_steps SET config=%s WHERE automation_id=%s AND node_type='trigger'",
+                    (json.dumps({'trigger_type': 'batch_enroll', 'segment_id': segment_id}), automation_id)
+                )
+                conn.commit()
+        finally:
+            conn.close()
+        return jsonify({
+                    'success': True,
+                    'enrolled': enroll_result['enrolled'],
+                    'skipped_suppressed': enroll_result['skipped_suppressed'],
+                    'skipped_nurture_owned': enroll_result['skipped_nurture_owned'],
+                    'skipped_cluster_conflict': enroll_result['skipped_cluster_conflict'],
+                    'skipped_no_email': enroll_result['skipped_no_email'],
+                })
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/automations/<int:automation_id>/nodes', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_automation_node_insert(automation_id):
+    """Splice a new node in right after after_node_key, on its 'main' (next_node_key) or
+    'alt' (next_node_key_alt -- only meaningful when after_node_key is an if_else)
+    pointer -- the mechanical form of the spec's "+ between every pair of nodes opens
+    the step palette". The new node inherits whatever after_node_key's pointer used to
+    point at, so inserting mid-chain doesn't orphan anything downstream."""
+    try:
+        d = request.get_json() or {}
+        node_type = d.get('node_type')
+        if node_type not in AUTOMATION_NODE_TYPES:
+            return jsonify({'error': f'Invalid node_type: {node_type}'}), 400
+        after_node_key = d.get('after_node_key')
+        branch = d.get('branch') or 'main'
+        if branch not in ('main', 'alt'):
+            return jsonify({'error': f'Invalid branch: {branch}'}), 400
+        config = d.get('config') or {}
+
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT node_key, next_node_key, next_node_key_alt FROM automation_steps WHERE automation_id=%s AND node_key=%s",
+                (automation_id, after_node_key)
+            )
+            after_node = cur.fetchone()
+            if not after_node:
+                conn.close()
+                return jsonify({'error': 'after_node_key not found in this automation.'}), 404
+
+            old_next = after_node['next_node_key'] if branch == 'main' else after_node['next_node_key_alt']
+            new_key = _new_node_key()
+            cur.execute(
+                "INSERT INTO automation_steps (automation_id, node_key, node_type, config, next_node_key) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (automation_id, new_key, node_type, json.dumps(config), old_next)
+            )
+            pointer_col = 'next_node_key' if branch == 'main' else 'next_node_key_alt'
+            cur.execute(
+                f"UPDATE automation_steps SET {pointer_col}=%s WHERE automation_id=%s AND node_key=%s",
+                (new_key, automation_id, after_node_key)
+            )
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'node_key': new_key})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/automations/<int:automation_id>/nodes/<node_key>', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_automation_node_update(automation_id, node_key):
+    """Update one node's config (and, for if_else only, its two branch targets --
+    next_node_key/next_automation_id for the true edge, _alt for false). Every other
+    node type only ever has next_node_key, set at insert time and left alone here --
+    reordering the chain itself happens by inserting/deleting nodes, not by editing
+    pointers directly through this route."""
+    try:
+        d = request.get_json() or {}
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT node_type FROM automation_steps WHERE automation_id=%s AND node_key=%s",
+                (automation_id, node_key)
+            )
+            node = cur.fetchone()
+            if not node:
+                conn.close()
+                return jsonify({'error': 'Node not found.'}), 404
+
+            config = d.get('config') or {}
+            if node['node_type'] == 'if_else':
+                next_automation_id = d.get('next_automation_id') or None
+                next_automation_id_alt = d.get('next_automation_id_alt') or None
+                cur.execute(
+                    "UPDATE automation_steps SET config=%s, next_automation_id=%s, next_automation_id_alt=%s "
+                    "WHERE automation_id=%s AND node_key=%s",
+                    (json.dumps(config), next_automation_id, next_automation_id_alt, automation_id, node_key)
+                )
+            else:
+                cur.execute(
+                    "UPDATE automation_steps SET config=%s WHERE automation_id=%s AND node_key=%s",
+                    (json.dumps(config), automation_id, node_key)
+                )
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/automations/<int:automation_id>/nodes/<node_key>/delete', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_automation_node_delete(automation_id, node_key):
+    """Splice the node out: find whichever predecessor points at it (main or alt edge)
+    and reconnect that edge to the deleted node's OWN next_node_key. If the deleted node
+    is itself an if_else with a populated alt/false branch, that branch's chain is
+    dropped (not merged) -- a known, deliberate simplification for this first version,
+    flagged in the UI (see the confirm() prompt client-side) rather than silently losing
+    it with no warning."""
+    try:
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT node_key, node_type, next_node_key FROM automation_steps WHERE automation_id=%s AND node_key=%s",
+                (automation_id, node_key)
+            )
+            node = cur.fetchone()
+            if not node:
+                conn.close()
+                return jsonify({'error': 'Node not found.'}), 404
+            if node['node_type'] == 'trigger':
+                conn.close()
+                return jsonify({'error': 'The trigger node cannot be deleted.'}), 400
+
+            cur.execute(
+                "SELECT node_key, next_node_key, next_node_key_alt FROM automation_steps "
+                "WHERE automation_id=%s AND (next_node_key=%s OR next_node_key_alt=%s)",
+                (automation_id, node_key, node_key)
+            )
+            for pred in cur.fetchall():
+                if pred['next_node_key'] == node_key:
+                    cur.execute(
+                        "UPDATE automation_steps SET next_node_key=%s WHERE automation_id=%s AND node_key=%s",
+                        (node['next_node_key'], automation_id, pred['node_key'])
+                    )
+                if pred['next_node_key_alt'] == node_key:
+                    cur.execute(
+                        "UPDATE automation_steps SET next_node_key_alt=%s WHERE automation_id=%s AND node_key=%s",
+                        (node['next_node_key'], automation_id, pred['node_key'])
+                    )
+            cur.execute("DELETE FROM automation_steps WHERE automation_id=%s AND node_key=%s", (automation_id, node_key))
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
+# ============================================================================
+# Lists (resolves the add_to_list/remove_from_list backing-mechanism decision left open
+# by the schema split -- lists/list_memberships, deliberately not lead_source_touches,
+# which is append-only provenance and can't represent real removal).
+# ============================================================================
+
+@app.route('/marketing/lists')
+@login_required
+@role_required('admin', 'marketing')
+def marketing_lists():
+    """The master lead pool -- moved here 2026-09-22 from marketing_leads() (Eric: "Dashboard >
+    Leads should only be providing visibility into interactions... every name we collect...
+    should go into the list"). Body swap, not an endpoint rename -- base.html's nav active-state
+    checks and every url_for('marketing_lists'...) already point here unchanged; only the
+    template and query logic moved. Named-lists panel (list_memberships, backs automation
+    add_to_list/remove_from_list nodes) is appended below the main table, unchanged logic."""
+    def _lead_segment(sp):
+        p = (sp or '').lower()
+        if not p:
+            return ('generic', None)
+        if '/agencies' in p:
+            return ('agency', None)
+        if 'vs-profound' in p:
+            return ('comparison', 'Profound')
+        if 'vs-semrush' in p:
+            return ('comparison', 'SEMrush')
+        if 'vs-brandlight' in p:
+            return ('comparison', 'Brandlight')
+        if '/compare' in p or 'best-ai-visibility' in p or 'citemetrix-vs-' in p:
+            return ('comparison', None)
+        return ('generic', None)
+
+    path_filter = (request.args.get('path') or '').strip()
+    # 2026-09-22: interaction= is the Leads-dashboard drill-down param AND the "filter by how
+    # someone interacted" want Eric called secondary -- same mechanism, not two. free_check/
+    # demo/contact_form are plain lead_events EXISTS checks; opened/clicked need the
+    # human-engagement lead-id set from _human_engaged_lead_ids() (same function the dashboard's
+    # tile counts use) rather than a second, SQL-only reimplementation of classify_engagement()'s
+    # 300s threshold that could drift from it. Computed BEFORE stage_filter's default below,
+    # because that default must not silently apply underneath a drill-down either -- see there.
+    interaction_filter = (request.args.get('interaction') or '').strip()
+    stage_param = request.args.get('stage')
+    # A scorecard tile counts a lead regardless of pipeline stage, so its drill-down must not
+    # silently inherit the page's own "Open -- New + Contacted" default -- found live: Free
+    # Check tile said 47, the un-stage-scoped drill-down first showed 46, one lead had simply
+    # moved past 'contacted'. Same divergence-prevention reasoning as the excluded=0 fix below.
+    if stage_param is None and interaction_filter:
+        stage_filter = ''
+    else:
+        stage_filter = 'open' if stage_param is None else stage_param.strip()
+    seg_filter = (request.args.get('segment') or '').strip()
+    campaign_filter = (request.args.get('campaign') or request.args.get('source_campaign') or '').strip()
+    source_filter = (request.args.get('source') or '').strip()
+    landing_filter = (request.args.get('landing_page') or '').strip()
+    search_filter = (request.args.get('q') or '').strip()
+    show_excluded = request.args.get('show') == 'excluded'
+    show_suppressed = request.args.get('suppressed') == '1'
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except ValueError:
+        page = 1
+    PER_PAGE = 50
+
+    # interaction=... is a scorecard drill-down: the tile counted every lead with that
+    # interaction regardless of excluded status, so the drill-down must match exactly, not
+    # silently apply the default excluded=0 filter underneath it -- otherwise the table's row
+    # count would disagree with the number just clicked, the exact divergence
+    # _compute_cs_alerts() exists to prevent elsewhere.
+    if interaction_filter:
+        where = []
+    else:
+        where = ["excluded=1" if show_excluded else "excluded=0"]
+    params = []
+    if path_filter in ('in_person', 'direct', 'inbound', 'beta', 'chat'):
+        where.append("original_source=%s"); params.append(path_filter)
+    if stage_filter == 'open':
+        where.append("stage IN ('new','contacted')")
+    elif stage_filter:
+        where.append("stage=%s"); params.append(stage_filter)
+    if show_suppressed:
+        where.append("suppressed_at IS NOT NULL")
+    if campaign_filter:
+        if campaign_filter == '(none)':
+            where.append("NOT EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_campaign')) IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_campaign'))!='')")
+        else:
+            where.append("EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_campaign'))=%s)")
+            params.append(campaign_filter)
+    if source_filter:
+        if source_filter == '(none)':
+            where.append("NOT EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_source')) IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_source'))!='')")
+        else:
+            where.append("EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_source'))=%s)")
+            params.append(source_filter)
+    if landing_filter:
+        where.append("EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.source_page')) LIKE %s)")
+        params.append('%' + landing_filter + '%')
+    if search_filter:
+        needle = '%' + search_filter + '%'
+        where.append(
+            "(email LIKE %s OR first_name LIKE %s OR last_name LIKE %s OR company LIKE %s "
+            "OR title LIKE %s OR phone LIKE %s OR linkedin_url LIKE %s "
+            "OR EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' "
+            "AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.brand_name')) LIKE %s))"
+        )
+        params.extend([needle] * 8)
+    interaction_event_map = {'free_check': 'free_check_completed', 'demo': 'meeting_booked', 'contact_form': 'contact_form_submitted', 'replied': 'replied', 'survey_submitted': 'survey_submitted'}
+    if interaction_filter in interaction_event_map:
+        where.append("EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type=%s)")
+        params.append(interaction_event_map[interaction_filter])
+    wsql = " WHERE " + " AND ".join(where)
+
+    leads, batches, lists_rows = [], [], []
+    path_counts = {'in_person': 0, 'direct': 0, 'inbound': 0}
+    stage_counts, excluded_count, suppressed_count = {}, 0, 0
+    enroll_by_lead = {}
+    try:
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            if interaction_filter in ('opened', 'clicked'):
+                opened_human, clicked_human = _human_engaged_lead_ids(cur)
+                target_ids = opened_human if interaction_filter == 'opened' else clicked_human
+                if target_ids:
+                    fmt = ','.join(['%s'] * len(target_ids))
+                    where.append(f"leads.id IN ({fmt})")
+                    params.extend(sorted(target_ids))
+                    wsql = " WHERE " + " AND ".join(where)
+                else:
+                    wsql = " WHERE 1=0"
+
+            cur.execute(
+                "SELECT leads.id, email, first_name, last_name, company, title, phone, linkedin_url, "
+                "source_override, original_source, stage, "
+                "suppressed_at, suppression_reason, excluded, wp_nurture_owned, ai_referral_platform, "
+                "legacy_id, legacy_source_table, leads.created_at, "
+                "(SELECT payload FROM lead_events WHERE lead_id=leads.id AND type='free_check_completed' ORDER BY id DESC LIMIT 1) AS fc_payload, "
+                "src.source AS batch_source, src.label AS batch_label "
+                "FROM leads LEFT JOIN source_refs src ON src.id = leads.original_source_ref_id" + wsql + " ORDER BY leads.created_at DESC", params
+            )
+            leads = cur.fetchall()
+
+            cur.execute("SELECT original_source, COUNT(*) n FROM leads WHERE excluded=%s GROUP BY original_source", (1 if show_excluded else 0,))
+            for r in cur.fetchall():
+                path_counts[r['original_source']] = r['n']
+            path_counts['all'] = sum(path_counts.values())
+
+            cur.execute("SELECT COUNT(*) n FROM leads WHERE excluded=1")
+            excluded_count = cur.fetchone()['n']
+            cur.execute("SELECT COUNT(*) n FROM leads WHERE suppressed_at IS NOT NULL AND excluded=0")
+            suppressed_count = cur.fetchone()['n']
+            cur.execute("SELECT stage, COUNT(*) n FROM leads WHERE excluded=0 GROUP BY stage")
+            stage_counts = {r['stage']: r['n'] for r in cur.fetchall()}
+
+            lead_ids = [l['id'] for l in leads]
+            if lead_ids:
+                fmt = ','.join(['%s'] * len(lead_ids))
+                cur.execute(
+                    f"SELECT lead_id, status, campaign_id FROM drip_enrollments WHERE lead_id IN ({fmt}) ORDER BY id DESC",
+                    lead_ids
+                )
+                for r in cur.fetchall():
+                    enroll_by_lead.setdefault(r['lead_id'], r)
+
+            cur.execute(
+                "SELECT b.id, b.label AS name, b.source, b.path AS batch_path, b.kind AS batch_kind, b.uploaded_by, b.row_count, b.new_count, b.dup_count, "
+                "b.suppressed_count, b.created_at, COUNT(DISTINCT t.lead_id) AS current_lead_count, "
+                "COUNT(DISTINCT CASE WHEN l.email_verification_status='unverified' THEN l.id END) AS unverified_count, "
+                "COUNT(DISTINCT CASE WHEN l.email_verification_status='valid' THEN l.id END) AS valid_count, "
+                "COUNT(DISTINCT CASE WHEN l.email_verification_status IN ('invalid','disposable') THEN l.id END) AS bad_count, "
+                "COUNT(DISTINCT CASE WHEN l.email_verification_status IN ('catchall','unknown') THEN l.id END) AS review_count, "
+                "(SELECT status FROM email_verification_jobs j WHERE j.source_ref_id=b.id ORDER BY j.id DESC LIMIT 1) AS verify_job_status "
+                "FROM source_refs b LEFT JOIN lead_source_touches t ON t.source_ref_id=b.id "
+                "LEFT JOIN leads l ON l.id=t.lead_id "
+                "WHERE b.kind IN ('import_batch','show') GROUP BY b.id ORDER BY b.created_at DESC"
+            )
+            batches = cur.fetchall()
+
+            cur.execute(
+                "SELECT l.*, (SELECT COUNT(*) FROM list_memberships m WHERE m.list_id=l.id) AS member_count "
+                "FROM lists l ORDER BY l.created_at DESC"
+            )
+            lists_rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        app.logger.exception('marketing lists query failed')
+
+    seg_counts = {}
+    for l in leads:
+        l['brand_name'] = l['model_score'] = l['source_page'] = None
+        l['utm_source'] = l['utm_medium'] = l['utm_campaign'] = None
+        l['segment'] = l['competitor'] = None
+        if l.get('fc_payload'):
+            try:
+                fc = json.loads(l['fc_payload'])
+                l['brand_name'] = fc.get('brand_name')
+                l['model_score'] = fc.get('model_score')
+                l['source_page'] = fc.get('source_page')
+                l['utm_source'] = fc.get('utm_source')
+                l['utm_medium'] = fc.get('utm_medium')
+                l['utm_campaign'] = fc.get('utm_campaign')
+            except (ValueError, TypeError):
+                pass
+        if l['original_source'] == 'inbound':
+            l['segment'], l['competitor'] = _lead_segment(l['source_page'])
+            seg_counts[l['segment']] = seg_counts.get(l['segment'], 0) + 1
+        else:
+            l['utm_source'] = l.get('batch_source')
+        if l.get('source_override'):
+            l['utm_source'] = l['source_override']
+        l['enrollment'] = enroll_by_lead.get(l['id'])
+
+    if seg_filter:
+        leads = [l for l in leads if l.get('segment') == seg_filter]
+
+    by_segment = [{'seg': s, 'n': seg_counts[s]} for s in ['agency', 'comparison', 'generic'] if seg_counts.get(s)]
+
+    total_filtered = len(leads)
+    total_pages = max(1, (total_filtered + PER_PAGE - 1) // PER_PAGE)
+    page = min(page, total_pages)
+    leads = leads[(page - 1) * PER_PAGE: page * PER_PAGE]
+
+    return render_template('marketing/lists.html', leads=leads, batches=batches, lists=lists_rows,
+                           path_counts=path_counts, stage_counts=stage_counts,
+                           f_path=path_filter, f_stage=stage_filter, f_segment=seg_filter,
+                           f_campaign=campaign_filter, f_source=source_filter, f_landing=landing_filter, f_search=search_filter,
+                           f_interaction=interaction_filter,
+                           show_excluded=show_excluded, show_suppressed=show_suppressed,
+                           excluded_count=excluded_count, suppressed_count=suppressed_count,
+                           by_segment=by_segment, page=page, total_pages=total_pages, total_filtered=total_filtered,
+                           neverbounce_configured=bool(os.environ.get('NEVERBOUNCE_API_KEY')))
+
+
+@app.route('/api/lists', methods=['GET'])
+@login_required
+@role_required('admin', 'marketing')
+def api_lists_index():
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM lists ORDER BY name")
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return jsonify({'lists': rows})
+
+
+@app.route('/api/lists', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_lists_create():
+    try:
+        d = request.get_json() or {}
+        name = (d.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'List name is required.'}), 400
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO lists (name, created_by) VALUES (%s,%s)", (name, current_user.id))
+            list_id = cur.lastrowid
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'list_id': list_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
+# ============================================================================
+# Tags + Segments (resolves the lists-mechanism follow-up: Eric's own call was a single
+# master pool with tags and flexible, multi-conditional segments -- not MailPoet-style
+# separate lists per source, which would combinatorially explode across source x platform
+# x campaign. Flat-AND conditions only in v1, chosen over nested AND/OR to keep this
+# shippable -- see the tags/segments plan.)
+# ============================================================================
+
+@app.route('/marketing/segments')
+@login_required
+@role_required('admin', 'marketing')
+def marketing_segments():
+    import segments as segments_module
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM tags ORDER BY name")
+            tag_rows = cur.fetchall()
+            tag_names = {t['id']: t['name'] for t in tag_rows}
+            cur.execute("SELECT id, name FROM lists ORDER BY name")
+            list_rows = cur.fetchall()
+            list_names = {l['id']: l['name'] for l in list_rows}
+
+            cur.execute("SELECT * FROM lead_segments ORDER BY created_at DESC")
+            segment_rows = cur.fetchall()
+            for s in segment_rows:
+                conditions = json.loads(s['conditions']) if isinstance(s['conditions'], str) else s['conditions']
+                s['conditions_parsed'] = conditions
+                s['summary'] = segments_module.describe_segment(conditions, tag_names, list_names)
+                try:
+                    s['member_count'] = len(segments_module.segment_member_ids(cur, s['id']))
+                except ValueError:
+                    s['member_count'] = 0
+    finally:
+        conn.close()
+    return render_template('marketing/segments.html', segments=segment_rows, tags=tag_rows, lists=list_rows)
+
+
+@app.route('/api/segments', methods=['GET'])
+@login_required
+@role_required('admin', 'marketing')
+def api_segments_index():
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM lead_segments ORDER BY name")
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return jsonify({'segments': rows})
+
+
+@app.route('/api/segments', methods=['POST'])
+@login_required
+@role_required('admin', 'marketing')
+def api_segments_create():
+    import segments as segments_module
+    try:
+        d = request.get_json() or {}
+        name = (d.get('name') or '').strip()
+        conditions = d.get('conditions')
+        if not name:
+            return jsonify({'error': 'Segment name is required.'}), 400
+        try:
+            segments_module.build_segment_sql(conditions)  # validates before saving
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+        conn = get_admin_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO lead_segments (name, conditions, created_by) VALUES (%s,%s,%s)",
+                (name, json.dumps(conditions), current_user.id)
+            )
+            segment_id = cur.lastrowid
+            conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'segment_id': segment_id})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/segments/<int:segment_id>/preview', methods=['GET'])
+@login_required
+@role_required('admin', 'marketing')
+def api_segments_preview(segment_id):
+    import segments as segments_module
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            try:
+                count = len(segments_module.segment_member_ids(cur, segment_id))
+            except ValueError as e:
+                return jsonify({'error': str(e)}), 404
+    finally:
+        conn.close()
+    return jsonify({'count': count})
+
+
+@app.route('/api/tags', methods=['GET'])
+@login_required
+@role_required('admin', 'marketing')
+def api_tags_index():
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM tags ORDER BY name")
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return jsonify({'tags': rows})
+
+
 def _unsubscribe_lead(conn, lead_id):
     """The one implementation of what 'unsubscribed' means for a lead -- suppress
     globally, halt every active enrollment (not just one campaign). Shared by the
@@ -6804,9 +7892,21 @@ def _unsubscribe_lead(conn, lead_id):
     return lead['email']
 
 
-@app.route('/unsubscribe/<token>')
+@app.route('/unsubscribe/<token>', methods=['GET', 'POST'])
 def public_unsubscribe(token):
-    """Public, no-login unsubscribe -- the link in every drip email."""
+    """Public, no-login unsubscribe -- the link in every drip email.
+
+    2026-09-25: also the RFC 8058 one-click receiving end. Mail clients (Gmail
+    etc.) that render a native Unsubscribe button next to the sender do so by
+    firing a bare POST with body List-Unsubscribe=One-Click to this same URL,
+    with no human in the loop after the initial click -- no confirmation page,
+    no further interaction. GET and POST intentionally share this one code
+    path: the existing GET behavior already unsubscribes immediately with no
+    confirmation step of its own, so it was already one-click-shaped; this
+    just adds the POST method mail clients actually use, per RFC 8058's
+    requirement that the URL accept POST. See email_helper.py's
+    list_unsubscribe param for where the paired List-Unsubscribe /
+    List-Unsubscribe-Post headers get set on the sending side."""
     try:
         conn = get_admin_db()
         cur = conn.cursor()
@@ -6965,19 +8065,44 @@ def sales_demo_requests():
 @login_required
 @role_required('admin', 'operations')
 def operations_api_status():
-    data = {'calls_24h': 0, 'calls_7d': 0, 'errors_7d': 0, 'err_rate_7d': 0, 'avg_ms_7d': 0, 'by_platform': [], 'daily': [], 'error_cats': [], 'attrib': {'client': 0, 'uncat': 0, 'structural': 0}}
+    data = {'calls_24h': 0, 'calls_7d': 0, 'errors_7d': 0, 'err_rate_7d': 0, 'avg_ms_7d': 0, 'by_platform': [], 'daily': [], 'error_cats': [], 'attrib': {'client': 0, 'uncat': 0, 'structural': 0}, 'now_utc': None}
     try:
         conn = get_db()
         with conn.cursor() as cur:
+            cur.execute("SELECT NOW() n")
+            _now = cur.fetchone()['n']
+            data['now_utc'] = _now
             cur.execute("SELECT COUNT(*) n FROM wp_citemetrix_api_usage WHERE created_at>=DATE_SUB(NOW(),INTERVAL 1 DAY)")
             data['calls_24h'] = int(cur.fetchone()['n'] or 0)
             cur.execute("SELECT COUNT(*) n, SUM(status='error') e, AVG(NULLIF(response_time_ms,0)) a FROM wp_citemetrix_api_usage WHERE created_at>=DATE_SUB(NOW(),INTERVAL 7 DAY)")
             r = cur.fetchone(); data['calls_7d'] = int(r['n'] or 0); data['errors_7d'] = int(r['e'] or 0); data['avg_ms_7d'] = int(r['a'] or 0)
             data['err_rate_7d'] = round(100*data['errors_7d']/data['calls_7d'], 1) if data['calls_7d'] else 0
-            cur.execute("SELECT platform, COUNT(*) n, SUM(status='error') e, AVG(NULLIF(response_time_ms,0)) a FROM wp_citemetrix_api_usage WHERE created_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) GROUP BY platform ORDER BY n DESC")
-            for r in cur.fetchall():
+            # 2026-09-24 (near-real-time visibility ask): by_platform's err_rate/calls stay a
+            # 30-day rollup (real historical signal, not 'current status'), but each row now
+            # also carries last_call_at + whether that last call succeeded, plus a freshness
+            # bucket, so the UI can show 'idle, no activity in Xh' instead of implying a
+            # 30-day-old error rate is happening right now -- the exact confusion that
+            # prompted this. Threshold: >2h since last call = idle (scan cadence is domain-
+            # scheduled and bursty, not a steady per-minute stream, so gaps of an hour or
+            # more between real traffic are normal, not a fault condition by themselves).
+            cur.execute("SELECT platform, COUNT(*) n, SUM(status='error') e, AVG(NULLIF(response_time_ms,0)) a, MAX(created_at) last_at FROM wp_citemetrix_api_usage WHERE created_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) GROUP BY platform ORDER BY n DESC")
+            _platform_rows = cur.fetchall()
+            for r in _platform_rows:
                 n = int(r['n'] or 0); e = int(r['e'] or 0)
-                data['by_platform'].append({'platform': r['platform'], 'calls': n, 'errors': e, 'err_rate': round(100*e/n, 1) if n else 0, 'avg_ms': int(r['a'] or 0)})
+                last_at = r['last_at']
+                age_min = int((_now - last_at).total_seconds() / 60) if last_at else None
+                data['by_platform'].append({
+                    'platform': r['platform'], 'calls': n, 'errors': e,
+                    'err_rate': round(100*e/n, 1) if n else 0, 'avg_ms': int(r['a'] or 0),
+                    'last_at': last_at, 'age_min': age_min, 'idle': (age_min is None or age_min > 120),
+                })
+            if _platform_rows:
+                _plist = [r['platform'] for r in _platform_rows]
+                _fmt = ','.join(['%s'] * len(_plist))
+                cur.execute(f"SELECT platform, status FROM wp_citemetrix_api_usage WHERE (platform, created_at) IN (SELECT platform, MAX(created_at) FROM wp_citemetrix_api_usage WHERE platform IN ({_fmt}) GROUP BY platform)", _plist)
+                _last_status = {row['platform']: row['status'] for row in cur.fetchall()}
+                for p in data['by_platform']:
+                    p['last_status'] = _last_status.get(p['platform'])
             cur.execute("SELECT DATE(created_at) d, COUNT(*) n, SUM(status='error') e FROM wp_citemetrix_api_usage WHERE created_at>=DATE_SUB(NOW(),INTERVAL 14 DAY) GROUP BY d ORDER BY d DESC")
             data['daily'] = [{'date': str(r['d']), 'calls': int(r['n'] or 0), 'errors': int(r['e'] or 0)} for r in cur.fetchall()]
             cur.execute("SELECT error_category ec, COUNT(*) n FROM wp_citemetrix_api_usage WHERE created_at>=DATE_SUB(NOW(),INTERVAL 30 DAY) AND status='error' AND error_category IS NOT NULL AND error_category<>'' GROUP BY ec ORDER BY n DESC LIMIT 10")
@@ -7103,6 +8228,58 @@ def operations_aws_pipeline():
 
     return render_template('operations/aws_pipeline.html', d=data)
 
+
+
+# 2026-09-24 (near-real-time visibility ask, layer 2): range-aware bucketed time series
+# backing the AI Platform APIs page's line chart. Aggregated on-the-fly from the existing
+# per-call log (wp_citemetrix_api_usage) -- no new rollup pipeline, per the scoping decision
+# (fast to ship, reuses real data; revisit with a precomputed rollup if the 1mo daily-bucket
+# query ever gets slow at higher volume -- not the case today). Bucket width adapts to range
+# so no chart ever renders thousands of points: 5-min buckets for 1h, hourly for 1w/2w, daily
+# for 1mo.
+API_STATUS_RANGES = {
+    '1h':  {'interval': 'INTERVAL 1 HOUR',  'bucket_expr': "FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(created_at)/300)*300)", 'label': 'Last hour'},
+    '1w':  {'interval': 'INTERVAL 7 DAY',   'bucket_expr': "DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00')", 'label': 'Last week'},
+    '2w':  {'interval': 'INTERVAL 14 DAY',  'bucket_expr': "DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00')", 'label': 'Last 2 weeks'},
+    '1mo': {'interval': 'INTERVAL 30 DAY',  'bucket_expr': "DATE(created_at)", 'label': 'Last month'},
+}
+
+
+@app.route('/api/operations/api-status/timeseries')
+@login_required
+@role_required('admin', 'operations')
+def api_operations_api_status_timeseries():
+    rng = request.args.get('range', '1w')
+    cfg = API_STATUS_RANGES.get(rng, API_STATUS_RANGES['1w'])
+    result = {'range': rng, 'label': cfg['label'], 'buckets': [], 'platforms': [], 'series': {}}
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {cfg['bucket_expr']} AS bucket, platform, COUNT(*) n, SUM(status='error') e "
+                f"FROM wp_citemetrix_api_usage WHERE created_at >= DATE_SUB(NOW(), {cfg['interval']}) "
+                f"GROUP BY bucket, platform ORDER BY bucket ASC"
+            )
+            rows = cur.fetchall()
+        conn.close()
+        buckets = sorted(set(str(r['bucket']) for r in rows))
+        platforms = sorted(set(r['platform'] for r in rows))
+        by_key = {(str(r['bucket']), r['platform']): r for r in rows}
+        result['buckets'] = buckets
+        result['platforms'] = platforms
+        for p in platforms:
+            calls_series = []
+            err_rate_series = []
+            for b in buckets:
+                row = by_key.get((b, p))
+                n = int(row['n']) if row else 0
+                e = int(row['e'] or 0) if row else 0
+                calls_series.append(n)
+                err_rate_series.append(round(100 * e / n, 1) if n else None)
+            result['series'][p] = {'calls': calls_series, 'err_rate': err_rate_series}
+    except Exception as e:
+        result['error'] = str(e)
+    return jsonify(result)
 
 @app.route('/customers/domain-transfer')
 @login_required
@@ -7361,12 +8538,62 @@ def _deliverability_anomalies(ses):
     return [{"severity": sv, "text": tx} for sv, tx in out]
 
 
+def _live_engagement_scorecard(cur, days=7):
+    """2026-09-25: real-time counterpart to the daily-cron campaign_effectiveness report above --
+    that report is written once a day and was already hours stale before either of today's two
+    Marblism/Legacy-Campaign launch batches (767 new enrollments) even existed. Queried fresh on
+    every page load, not cached, so it actually reflects same-day sends. Reuses
+    leads_drip.classify_engagement() (the same human-vs-bot open classifier validated earlier this
+    session against ~2 real human clicks total) rather than raw SES open/click counts, which are
+    known to be heavily inflated by link-scanner/image-prefetch bot traffic."""
+    import leads_drip
+    cur.execute(
+        """SELECT dsl.sent_at, dsl.opened_at, dsl.clicked_at,
+                  COALESCE(ar.lead_id, de.lead_id) AS lead_id
+           FROM drip_send_log dsl
+           LEFT JOIN automation_runs  ar ON ar.id = dsl.run_key
+           LEFT JOIN drip_enrollments de ON de.id = dsl.enrollment_id
+           WHERE dsl.status = 'sent' AND dsl.sent_at >= DATE_SUB(NOW(), INTERVAL %s DAY)""",
+        (days,)
+    )
+    rows = cur.fetchall()
+    sent = opened_human = clicked_human = 0
+    lead_ids = set()
+    for r in rows:
+        sent += 1
+        if r['lead_id']:
+            lead_ids.add(r['lead_id'])
+        state, _ver = leads_drip.classify_engagement(r['sent_at'], r['opened_at'], r['clicked_at'])
+        if state == 'opened_human_like':
+            opened_human += 1
+            if r['clicked_at'] is not None:
+                clicked_human += 1
+
+    form_completed = 0
+    if lead_ids:
+        fmt = ','.join(['%s'] * len(lead_ids))
+        cur.execute(
+            f"SELECT COUNT(DISTINCT lead_id) c FROM lead_events WHERE type='free_check_completed' "
+            f"AND lead_id IN ({fmt}) AND occurred_at >= DATE_SUB(NOW(), INTERVAL %s DAY)",
+            tuple(lead_ids) + (days,)
+        )
+        form_completed = (cur.fetchone() or {}).get('c', 0)
+
+    return {
+        'days': days, 'sent': sent, 'opened_human': opened_human,
+        'clicked_human': clicked_human, 'form_completed': form_completed,
+        'generated_at': datetime.now(),
+    }
+
+
 @app.route('/marketing/measure/effectiveness')
 @login_required
 @role_required('admin', 'marketing')
 def campaign_effectiveness():
     """Campaign effectiveness — GA4 funnel + deterministic email lead→sale join + GSC halo.
-    Data produced by the daily cron (jobs/campaign_effectiveness.py) into reports/campaigns/. Read-only."""
+    Data produced by the daily cron (jobs/campaign_effectiveness.py) into reports/campaigns/. Read-only.
+    live_engagement (2026-09-25) is the exception -- queried fresh every request, see its own
+    docstring; everything else on this page stays the daily-cron snapshot."""
     import os as _os, json as _json
     path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'reports', 'campaigns', 'campaign-effectiveness.json')
     try:
@@ -7378,8 +8605,15 @@ def campaign_effectiveness():
     ca = request.args.get('ca', ''); cb = request.args.get('cb', '')
     compare = _compare_campaigns(data['campaigns'], ca, cb) if (data and ca and cb) else None
     source_rows = _source_comparison(data.get('campaigns', []) if data else [])
+    conn = get_admin_db()
+    try:
+        with conn.cursor() as cur:
+            live_engagement = _live_engagement_scorecard(cur, days=7)
+    finally:
+        conn.close()
     return render_template('marketing/campaign_effectiveness.html', data=data, anomalies=anomalies,
-                           camp_names=camp_names, ca=ca, cb=cb, compare=compare, source_rows=source_rows)
+                           camp_names=camp_names, ca=ca, cb=cb, compare=compare, source_rows=source_rows,
+                           live_engagement=live_engagement)
 
 
 @app.route('/marketing/campaign-effectiveness')
@@ -7729,214 +8963,77 @@ def daily_leadgen_refresh_status():
 #    landing_page kept for campaign_effectiveness.html's drill-down links,
 #    now matched against the free_check_completed lead_events payload since
 #    that's where a free-check lead's UTM/source_page actually live post-3b. ──
+def _human_engaged_lead_ids(cursor):
+    """Returns (opened_human_ids: set, clicked_human_ids: set) -- the single source of truth
+    for "did a real person interact," used by both the Leads dashboard's tile counts
+    (_compute_lead_scorecards) and marketing_lists()'s interaction=opened/clicked drill-down
+    filter, so a tile number and what you see after clicking it can never disagree (same
+    discipline _compute_cs_alerts() already uses). Reuses leads_drip.classify_engagement()
+    directly rather than reimplementing its 300-second bot-vs-human threshold as raw SQL --
+    a second implementation of the same rule is exactly how ENGAGEMENT_FILTER_VERSION's own
+    versioning discipline gets defeated. classify_engagement() itself doesn't classify clicks
+    (confirmed 2026-09-22, only opens drive its logic) -- clicked_human is defined here as
+    "clicked AND the send's own open was human-like," reusing the one real threshold that
+    exists rather than inventing a second one for clicks specifically."""
+    import leads_drip
+    cursor.execute(
+        """SELECT COALESCE(ar.lead_id, de.lead_id) AS lead_id, dsl.sent_at, dsl.opened_at, dsl.clicked_at
+           FROM drip_send_log dsl
+           LEFT JOIN automation_runs  ar ON ar.id = dsl.run_key
+           LEFT JOIN drip_enrollments de ON de.id = dsl.enrollment_id
+           WHERE dsl.opened_at IS NOT NULL"""
+    )
+    opened_human, clicked_human = set(), set()
+    for row in cursor.fetchall():
+        if row['lead_id'] is None:
+            continue
+        state, _ = leads_drip.classify_engagement(row['sent_at'], row['opened_at'], row['clicked_at'])
+        if state == 'opened_human_like':
+            opened_human.add(row['lead_id'])
+            if row['clicked_at'] is not None:
+                clicked_human.add(row['lead_id'])
+    return opened_human, clicked_human
+
+
+def _compute_lead_scorecards(cursor):
+    """Single source of truth for every tile on the Leads dashboard. sourced/touch_sent are
+    deliberately excluded -- 'sourced' is provenance (how a lead entered the pool), not an
+    interaction; 'touch_sent' is an outbound send, which per Eric's own words must not count
+    until the recipient actually acts on it ("that person wouldn't show up... until such time
+    as they open a message"). replied/survey_submitted show as real 0-tiles rather than being
+    hidden -- both are already real lead_events.type taxonomy, the extra COUNT is free, and a
+    visible 0 previews what's coming without a later "why is this missing" question."""
+    tiles = {}
+    for key, event_type in (
+        ('free_check', 'free_check_completed'),
+        ('demo', 'meeting_booked'),
+        ('contact_form', 'contact_form_submitted'),
+        ('replied', 'replied'),
+        ('survey_submitted', 'survey_submitted'),
+    ):
+        cursor.execute("SELECT COUNT(DISTINCT lead_id) AS n FROM lead_events WHERE type=%s", (event_type,))
+        tiles[key] = cursor.fetchone()['n']
+    opened_human, clicked_human = _human_engaged_lead_ids(cursor)
+    tiles['opened'] = len(opened_human)
+    tiles['clicked'] = len(clicked_human)
+    return tiles
+
+
 @app.route('/marketing/leads')
 @login_required
 @role_required('admin', 'marketing')
 def marketing_leads():
-    def _lead_segment(sp):
-        p = (sp or '').lower()
-        if not p:
-            return ('generic', None)
-        if '/agencies' in p:
-            return ('agency', None)
-        if 'vs-profound' in p:
-            return ('comparison', 'Profound')
-        if 'vs-semrush' in p:
-            return ('comparison', 'SEMrush')
-        if 'vs-brandlight' in p:
-            return ('comparison', 'Brandlight')
-        if '/compare' in p or 'best-ai-visibility' in p or 'citemetrix-vs-' in p:
-            return ('comparison', None)
-        return ('generic', None)
-
-    path_filter = (request.args.get('path') or '').strip()
-    # IA spec §4: marketing's default view is the leads it's actually working -- new and
-    # contacted, the two stages nothing has replied to yet. 'open' (not '') is the sentinel
-    # for that default, distinguished from an explicit "All" pick via request.args.get()
-    # returning None when the query param is entirely absent vs. '' when the user's own
-    # dropdown pick was the blank "All" option -- collapsing those two into one ('' via
-    # `or ''`, the pre-IA-spec code) is exactly what made "All" and "no filter yet" the same
-    # state and lost the distinction this default needs.
-    stage_param = request.args.get('stage')
-    stage_filter = 'open' if stage_param is None else stage_param.strip()
-    seg_filter = (request.args.get('segment') or '').strip()
-    campaign_filter = (request.args.get('campaign') or request.args.get('source_campaign') or '').strip()
-    source_filter = (request.args.get('source') or '').strip()
-    landing_filter = (request.args.get('landing_page') or '').strip()
-    search_filter = (request.args.get('q') or '').strip()
-    show_excluded = request.args.get('show') == 'excluded'
-    show_suppressed = request.args.get('suppressed') == '1'
+    """The interaction-effectiveness dashboard -- rebuilt 2026-09-22 (Eric: "Dashboard > Leads
+    should only be providing visibility into the interactions they've had with us via
+    scorecards we can drill down on"). The membership list itself moved to marketing_lists()
+    (/marketing/lists) -- this page shows nothing but interaction counts."""
+    conn = get_admin_db()
     try:
-        page = max(1, int(request.args.get('page', 1)))
-    except ValueError:
-        page = 1
-    PER_PAGE = 50
-
-    where = ["excluded=1" if show_excluded else "excluded=0"]
-    params = []
-    if path_filter in ('in_person', 'direct', 'inbound', 'beta', 'chat'):
-        where.append("original_source=%s"); params.append(path_filter)
-    if stage_filter == 'open':
-        where.append("stage IN ('new','contacted')")
-    elif stage_filter:
-        where.append("stage=%s"); params.append(stage_filter)
-    if show_suppressed:
-        where.append("suppressed_at IS NOT NULL")
-    if campaign_filter:
-        if campaign_filter == '(none)':
-            where.append("NOT EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_campaign')) IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_campaign'))!='')")
-        else:
-            where.append("EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_campaign'))=%s)")
-            params.append(campaign_filter)
-    if source_filter:
-        if source_filter == '(none)':
-            where.append("NOT EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_source')) IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_source'))!='')")
-        else:
-            where.append("EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.utm_source'))=%s)")
-            params.append(source_filter)
-    if landing_filter:
-        where.append("EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.source_page')) LIKE %s)")
-        params.append('%' + landing_filter + '%')
-    if search_filter:
-        # Free-text search across every identity field a lead is realistically looked up
-        # by -- email first (the common case), then name/company/title/phone/LinkedIn so
-        # "who was that person from Acme" or a phone number pasted from an email both work,
-        # not just an exact email match. brand_name is the one displayed field ("Name /
-        # Brand" column) that ISN'T a leads column -- it lives in the free_check_completed
-        # event payload (the scanned domain's brand, for inbound leads), so it needs its
-        # own EXISTS clause OR'd in, same shape as the campaign/source/landing filters
-        # above, or searching "the Acme scan" would silently miss the row it's shown on.
-        # Plain LIKE, no FULLTEXT index -- this table's size (low thousands of rows)
-        # doesn't need one; revisit only if this table grows enough for it to matter.
-        needle = '%' + search_filter + '%'
-        where.append(
-            "(email LIKE %s OR first_name LIKE %s OR last_name LIKE %s OR company LIKE %s "
-            "OR title LIKE %s OR phone LIKE %s OR linkedin_url LIKE %s "
-            "OR EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id=leads.id AND e.type='free_check_completed' "
-            "AND JSON_UNQUOTE(JSON_EXTRACT(e.payload,'$.brand_name')) LIKE %s))"
-        )
-        params.extend([needle] * 8)
-    wsql = " WHERE " + " AND ".join(where)
-
-    leads, batches = [], []
-    path_counts = {'in_person': 0, 'direct': 0, 'inbound': 0}
-    stage_counts, excluded_count, suppressed_count = {}, 0, 0
-    enroll_by_lead = {}
-    try:
-        conn = get_admin_db()
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT leads.id, email, first_name, last_name, company, title, phone, linkedin_url, "
-                "source_override, original_source, stage, "
-                "suppressed_at, suppression_reason, excluded, wp_nurture_owned, ai_referral_platform, "
-                "legacy_id, legacy_source_table, leads.created_at, "
-                "(SELECT payload FROM lead_events WHERE lead_id=leads.id AND type='free_check_completed' ORDER BY id DESC LIMIT 1) AS fc_payload, "
-                "src.source AS batch_source, src.label AS batch_label "
-                "FROM leads LEFT JOIN source_refs src ON src.id = leads.original_source_ref_id" + wsql + " ORDER BY leads.created_at DESC", params
-            )
-            leads = cur.fetchall()
-
-            cur.execute("SELECT original_source, COUNT(*) n FROM leads WHERE excluded=%s GROUP BY original_source", (1 if show_excluded else 0,))
-            # 2026-09-04 (IA spec §8): path_counts started as exactly the 3 original original_source
-            # values (in_person/direct/inbound) -- the "All" chip's own count summed just those 3
-            # keys in the template, which silently undercounted once 'beta'/'chat' became real
-            # values (the actual All-filtered list was always correct; only this displayed number
-            # was wrong). 'all' is now a real grand total across every value, not an in-template sum
-            # of a hardcoded subset, so it can never drift out of sync with a future new path again.
-            for r in cur.fetchall():
-                path_counts[r['original_source']] = r['n']
-            path_counts['all'] = sum(path_counts.values())
-
-            cur.execute("SELECT COUNT(*) n FROM leads WHERE excluded=1")
-            excluded_count = cur.fetchone()['n']
-            cur.execute("SELECT COUNT(*) n FROM leads WHERE suppressed_at IS NOT NULL AND excluded=0")
-            suppressed_count = cur.fetchone()['n']
-            cur.execute("SELECT stage, COUNT(*) n FROM leads WHERE excluded=0 GROUP BY stage")
-            stage_counts = {r['stage']: r['n'] for r in cur.fetchall()}
-
-            lead_ids = [l['id'] for l in leads]
-            if lead_ids:
-                fmt = ','.join(['%s'] * len(lead_ids))
-                cur.execute(
-                    f"SELECT lead_id, status, campaign_id FROM drip_enrollments WHERE lead_id IN ({fmt}) ORDER BY id DESC",
-                    lead_ids
-                )
-                for r in cur.fetchall():
-                    enroll_by_lead.setdefault(r['lead_id'], r)
-
-            cur.execute(
-                "SELECT b.id, b.label AS name, b.source, b.path AS batch_path, b.kind AS batch_kind, b.uploaded_by, b.row_count, b.new_count, b.dup_count, "
-                "b.suppressed_count, b.created_at, COUNT(DISTINCT t.lead_id) AS current_lead_count, "
-                "COUNT(DISTINCT CASE WHEN l.email_verification_status='unverified' THEN l.id END) AS unverified_count, "
-                "COUNT(DISTINCT CASE WHEN l.email_verification_status='valid' THEN l.id END) AS valid_count, "
-                "COUNT(DISTINCT CASE WHEN l.email_verification_status IN ('invalid','disposable') THEN l.id END) AS bad_count, "
-                "COUNT(DISTINCT CASE WHEN l.email_verification_status IN ('catchall','unknown') THEN l.id END) AS review_count, "
-                "(SELECT status FROM email_verification_jobs j WHERE j.source_ref_id=b.id ORDER BY j.id DESC LIMIT 1) AS verify_job_status "
-                "FROM source_refs b LEFT JOIN lead_source_touches t ON t.source_ref_id=b.id "
-                "LEFT JOIN leads l ON l.id=t.lead_id "
-                "WHERE b.kind IN ('import_batch','show') GROUP BY b.id ORDER BY b.created_at DESC"
-            )
-            batches = cur.fetchall()
+            tiles = _compute_lead_scorecards(cur)
+    finally:
         conn.close()
-    except Exception:
-        app.logger.exception('marketing leads query failed')
-
-    seg_counts = {}
-    for l in leads:
-        l['brand_name'] = l['model_score'] = l['source_page'] = None
-        l['utm_source'] = l['utm_medium'] = l['utm_campaign'] = None
-        l['segment'] = l['competitor'] = None
-        if l.get('fc_payload'):
-            try:
-                fc = json.loads(l['fc_payload'])
-                l['brand_name'] = fc.get('brand_name')
-                l['model_score'] = fc.get('model_score')
-                l['source_page'] = fc.get('source_page')
-                l['utm_source'] = fc.get('utm_source')
-                l['utm_medium'] = fc.get('utm_medium')
-                l['utm_campaign'] = fc.get('utm_campaign')
-            except (ValueError, TypeError):
-                pass
-        if l['original_source'] == 'inbound':
-            l['segment'], l['competitor'] = _lead_segment(l['source_page'])
-            seg_counts[l['segment']] = seg_counts.get(l['segment'], 0) + 1
-        else:
-            # Direct/in-person leads have no free-check event, so no utm_source ever lands
-            # here -- fall back to the batch's own source_refs.source (what was typed at
-            # CSV-upload time, e.g. "Marblism LinkedIn") so the per-lead Source column isn't
-            # silently blank for every non-inbound lead despite that data existing.
-            l['utm_source'] = l.get('batch_source')
-        # A manually-entered source_override (Addendum 29's Edit lead) always wins over
-        # either derived value -- it's Eric correcting the record by hand, not a fallback.
-        if l.get('source_override'):
-            l['utm_source'] = l['source_override']
-        l['enrollment'] = enroll_by_lead.get(l['id'])
-
-    if seg_filter:
-        leads = [l for l in leads if l.get('segment') == seg_filter]
-
-    by_segment = [{'seg': s, 'n': seg_counts[s]} for s in ['agency', 'comparison', 'generic'] if seg_counts.get(s)]
-
-    # Real pagination (2026-09-04, IA spec §9 bug 2): this used to be a flat LIMIT 500 on
-    # the SQL query with no page controls at all -- correct at ~330 rows, silently drops
-    # leads past 500 with zero indication once the list outgrows that. Paginated in Python,
-    # after every filter (including seg_filter above, which is itself Python-side since
-    # `segment` is derived from source_page, not a stored column SQL could filter/paginate
-    # on directly) -- so the page count is always right for whatever's actually being shown,
-    # not just the pre-segment-filter SQL row count.
-    total_filtered = len(leads)
-    total_pages = max(1, (total_filtered + PER_PAGE - 1) // PER_PAGE)
-    page = min(page, total_pages)
-    leads = leads[(page - 1) * PER_PAGE: page * PER_PAGE]
-
-    return render_template('marketing/leads.html', leads=leads, batches=batches,
-                           path_counts=path_counts, stage_counts=stage_counts,
-                           f_path=path_filter, f_stage=stage_filter, f_segment=seg_filter,
-                           f_campaign=campaign_filter, f_source=source_filter, f_landing=landing_filter, f_search=search_filter,
-                           show_excluded=show_excluded, show_suppressed=show_suppressed,
-                           excluded_count=excluded_count, suppressed_count=suppressed_count,
-                           by_segment=by_segment, page=page, total_pages=total_pages, total_filtered=total_filtered,
-                           neverbounce_configured=bool(os.environ.get('NEVERBOUNCE_API_KEY')))
+    return render_template('marketing/leads.html', tiles=tiles)
 
 
 def _toggle_lead_excluded(conn, lead_id):
@@ -7977,7 +9074,7 @@ def marketing_leads_toggle():
             conn.close()
     except Exception:
         app.logger.exception('lead toggle failed')
-    return redirect(request.referrer or url_for('marketing_leads'))
+    return redirect(request.referrer or url_for('marketing_lists'))
 
 
 # ── Edit lead — 2026-09-03: no edit path existed anywhere for an individual lead;
@@ -8259,6 +9356,54 @@ def api_leads_detail(lead_id):
                         text += f" -- {r['error']}"
                     timeline.append({'occurred_at': r['sent_at'], 'text': text})
 
+            # 2026-09-23 bugfix: this panel used to read drip_enrollments/drip_send_log
+            # only -- the legacy engine's tables. Once a campaign migrates to automation_runs
+            # (drip_campaigns.migrated_automation_id set), its real live enrollment/send state
+            # lives there instead, and the legacy mirror row (kept only for the dual-run
+            # window -- see lead_pool.is_eligible()'s docstring) goes stale. So this panel was
+            # silently showing a migrated lead's OLD status forever -- e.g. "Active" for an
+            # enrollment that's actually blocked on the engine actually running it. Confirmed
+            # live: lead 37779 showed "Free-Check Nurture -- Generic: Active" here while its
+            # real automation_runs row sat blocked. Appended into the SAME enrollments/timeline
+            # lists (not a separate section) so the existing STATE/TIMELINE rendering in
+            # base.html, which already iterates these lists generically by field name, needs no
+            # frontend change to pick new-engine rows up. Queried after the legacy per-step
+            # block above (not merged into it) so its enrollment_ids IN (...) query is never
+            # polluted by automation_runs ids, which are a different auto_increment sequence
+            # and can numerically collide with unrelated drip_enrollments ids.
+            cur.execute(
+                "SELECT r.id, r.automation_id AS campaign_id, a.name AS campaign_name, r.status, "
+                "r.current_node_key, r.entered_at AS enrolled_at, r.next_due_at AS next_send_due_at "
+                "FROM automation_runs r JOIN automations a ON a.id=r.automation_id WHERE r.lead_id=%s ORDER BY r.entered_at DESC",
+                (lead_id,)
+            )
+            verbs = {'sent': 'sent', 'failed': 'failed to send', 'suppressed': 'suppressed', 'blocked': 'blocked', 'cancelled': 'cancelled'}
+            for r in cur.fetchall():
+                digits = ''.join(ch for ch in (r['current_node_key'] or '') if ch.isdigit())
+                r['current_step'] = int(digits) if digits else 0
+                r['block_reason'] = None
+                timeline.append({'occurred_at': r['enrolled_at'], 'text': f"Enrolled in {r['campaign_name']}"})
+                if r['status'] in ('blocked', 'suppressed'):
+                    cur.execute(
+                        "SELECT error FROM drip_send_log WHERE run_key=%s AND status=%s ORDER BY sent_at DESC LIMIT 1",
+                        (r['id'], r['status'])
+                    )
+                    err_row = cur.fetchone()
+                    if err_row:
+                        r['block_reason'] = err_row['error']
+                enrollments.append(r)
+
+                cur.execute(
+                    "SELECT sent_at, status AS send_status, error, node_key FROM drip_send_log WHERE run_key=%s",
+                    (r['id'],)
+                )
+                for sl in cur.fetchall():
+                    verb = verbs.get(sl['send_status'], sl['send_status'])
+                    text = f"{r['campaign_name']} step {sl['node_key']} {verb}"
+                    if sl['send_status'] in ('blocked', 'suppressed') and sl.get('error'):
+                        text += f" -- {sl['error']}"
+                    timeline.append({'occurred_at': sl['sent_at'], 'text': text})
+
             timeline = [t for t in timeline if t['occurred_at'] is not None]
             timeline.sort(key=lambda x: x['occurred_at'], reverse=True)
 
@@ -8316,48 +9461,6 @@ def api_leads_add_note(lead_id):
         conn.commit()
     finally:
         conn.close()
-    return jsonify({'success': True})
-
-
-@app.route('/api/drip/campaigns/list')
-@login_required
-@role_required('admin', 'sales', 'marketing')
-def api_drip_campaigns_list():
-    """Lightweight campaign picker for the lead detail panel's 'enroll in a sequence' action --
-    the full /marketing/drip-campaigns page renders a lot more than a dropdown needs."""
-    conn = get_admin_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, name, active FROM drip_campaigns ORDER BY name ASC")
-            campaigns = cur.fetchall()
-    finally:
-        conn.close()
-    return jsonify({'campaigns': campaigns})
-
-
-@app.route('/api/leads/<int:lead_id>/enroll', methods=['POST'])
-@login_required
-@role_required('admin', 'sales', 'marketing')
-def api_leads_enroll(lead_id):
-    """Manual single-lead enroll from the lead detail panel -- reuses leads_drip.
-    enroll_single_lead(), the exact same helper the cold->warm branching feature uses, so a
-    manual enroll and an automatic branch-enroll behave identically (same suppressed-row
-    revival rule, same 'already on this campaign' no-op)."""
-    import leads_drip
-    campaign_id = request.form.get('campaign_id')
-    if not campaign_id:
-        return jsonify({'error': 'campaign_id is required.'}), 400
-    conn = get_admin_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM leads WHERE id=%s", (lead_id,))
-            if not cur.fetchone():
-                return jsonify({'error': 'Lead not found.'}), 404
-            result = leads_drip.enroll_single_lead(cur, conn, int(campaign_id), lead_id)
-    finally:
-        conn.close()
-    if not result['enrolled']:
-        return jsonify({'error': result['reason'] or 'Could not enroll.'}), 400
     return jsonify({'success': True})
 
 

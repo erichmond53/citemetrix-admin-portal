@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+{% block title %}{{ automation.name }}{% endblock %}
+{% block content %}
+<style>
+.au-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; }
+.au-funnel { font-size:13px; color:var(--gray-500); margin-top:4px; }
+.au-funnel b { color:var(--gray-900,#111); }
+.au-settings { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:16px 20px; margin-bottom:24px; display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; }
+.au-settings .fg { flex:1; min-width:180px; }
+.au-settings label { display:block; font-size:12px; font-weight:500; color:var(--gray-600); margin-bottom:4px; }
+.au-settings input[type=text], .au-settings select { width:100%; padding:9px 11px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box; }
+.au-chain { max-width:640px; margin:0 auto; }
+.au-node { background:#fff; border:1px solid var(--gray-200); border-radius:10px; padding:14px 16px; position:relative; }
+.au-node-type { font-size:11px; font-weight:700; text-transform:uppercase; color:var(--primary); margin-bottom:4px; }
+.au-node-summary { font-size:14px; color:var(--gray-800,#1f2937); }
+.au-node-actions { display:flex; gap:6px; margin-top:10px; }
+.au-trigger { text-align:center; background:var(--gray-50,#f9fafb); border:1px dashed var(--gray-300,#d1d5db); border-radius:10px; padding:12px; font-size:13px; color:var(--gray-500); cursor:pointer; }
+.au-trigger:hover { border-color:var(--primary); color:var(--gray-700); }
+.au-plus-row { display:flex; justify-content:center; padding:10px 0; position:relative; }
+.au-plus-row::before { content:''; position:absolute; top:0; bottom:0; left:50%; width:2px; background:var(--gray-200); }
+.au-plus-btn { position:relative; z-index:1; width:28px; height:28px; border-radius:50%; background:#fff; border:2px solid var(--primary); color:var(--primary); font-size:16px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; }
+.au-fork { display:flex; gap:24px; margin-top:14px; }
+.au-branch { flex:1; min-width:0; }
+.au-branch-label { text-align:center; font-size:12px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin-bottom:8px; padding:4px 10px; background:var(--gray-100); border-radius:6px; }
+.au-branch-label.yes { color:#065F46; background:#D1FAE5; }
+.au-branch-label.no { color:#991B1B; background:#FEE2E2; }
+.au-handoff { text-align:center; background:#EFF6FF; border:1px solid #93C5FD; border-radius:8px; padding:10px; font-size:13px; color:#1E3A8A; }
+.au-palette { display:none; position:absolute; z-index:50; background:#fff; border:1px solid var(--gray-200); border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.15); padding:8px; top:38px; left:50%; transform:translateX(-50%); width:200px; }
+.au-palette.open { display:block; }
+.au-palette button { display:block; width:100%; text-align:left; padding:8px 10px; border:none; background:none; border-radius:6px; cursor:pointer; font-size:13px; }
+.au-palette button:hover { background:var(--gray-100); }
+.btn-s { background:var(--gray-100); color:var(--gray-700); border:1px solid var(--gray-200); padding:6px 12px; border-radius:8px; font-weight:500; cursor:pointer; font-size:12px; }
+.btn-p2 { background:var(--primary); color:#fff; border:none; padding:8px 14px; border-radius:8px; font-weight:500; cursor:pointer; font-size:13px; }
+.au-modal-backdrop { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.45); z-index:200; align-items:center; justify-content:center; }
+.au-modal-backdrop.open { display:flex; }
+.au-modal { background:#fff; border-radius:12px; padding:24px; width:100%; max-width:480px; max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.25); }
+.au-modal h3 { margin:0 0 16px; font-size:16px; }
+.au-field { margin-bottom:12px; }
+.au-field label { display:block; font-size:12px; font-weight:500; color:var(--gray-600); margin-bottom:4px; }
+.au-field input, .au-field select { width:100%; padding:9px 11px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box; }
+.au-cond-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:13px; }
+.au-cond-row .label { flex:1; }
+.au-cond-row select { flex:0 0 130px; }
+.au-status { margin-top:12px; padding:10px 14px; border-radius:8px; font-size:14px; display:none; }
+.au-status.success { display:block; background:#F0FDF4; color:#166534; }
+.au-status.error { display:block; background:#FEF2F2; color:#991B1B; }
+</style>
+
+<div class="au-header">
+  <div>
+    <h1 style="margin:0 0 4px;"><a href="/marketing/automations" style="color:var(--gray-400);text-decoration:none;font-size:14px;">← Automations</a></h1>
+    <div class="au-funnel"><b>{{ funnel.entered }}</b> entered → <b>{{ funnel.processing }}</b> processing → <b>{{ funnel.exited }}</b> exited</div>
+  </div>
+</div>
+
+<div class="au-settings">
+  <div class="fg"><label>Name</label><input type="text" id="au-name" value="{{ automation.name }}"></div>
+  <div class="fg" style="flex:0 0 160px;"><label>Status</label>
+    <select id="au-status">
+      {% for st in ['draft','active','inactive','archived'] %}
+      <option value="{{ st }}" {{ 'selected' if automation.status == st }}>{{ st|capitalize }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="fg" style="flex:0 0 220px;"><label><input type="checkbox" id="au-run-once" {{ 'checked' if automation.run_once_per_subscriber }}> Run once per subscriber</label></div>
+  <button class="btn-p2" onclick="auSaveSettings()">Save</button>
+</div>
+
+<div class="au-chain">
+  <div class="au-trigger" onclick="auOpenEnroll()">Trigger — batch enroll · click to enroll leads</div>
+  {% macro render_plus(after_key, branch) %}
+  <div class="au-plus-row">
+    <button class="au-plus-btn" onclick="auTogglePalette(this)">+</button>
+    <div class="au-palette">
+      <button onclick="auInsert('{{ after_key }}','{{ branch }}','delay')">Delay</button>
+      <button onclick="auInsert('{{ after_key }}','{{ branch }}','send_email')">Send email</button>
+      <button onclick="auInsert('{{ after_key }}','{{ branch }}','if_else')">If / Else</button>
+      <button onclick="auInsert('{{ after_key }}','{{ branch }}','add_to_list')">Add to list</button>
+      <button onclick="auInsert('{{ after_key }}','{{ branch }}','remove_from_list')">Remove from list</button>
+      <button onclick="auInsert('{{ after_key }}','{{ branch }}','unsubscribe')">Unsubscribe</button>
+    </div>
+  </div>
+  {% endmacro %}
+  {% macro render_chain(chain, after_key, branch) %}
+    {{ render_plus(after_key, branch) }}
+    {% for node in chain %}
+      <div class="au-node" data-node-key="{{ node.node_key }}" data-node-type="{{ node.node_type }}"
+           data-config='{{ node.config|tojson }}'
+           data-next-automation-id="{{ node.next_automation_id or '' }}"
+           data-next-automation-id-alt="{{ node.next_automation_id_alt or '' }}">
+        {% if node.node_type == 'delay' %}
+          <div class="au-node-type">Delay</div>
+          <div class="au-node-summary">Wait {{ node.config.value if node.config.value is not none else 0 }} {{ node.config.unit or 'days' }}</div>
+        {% elif node.node_type == 'send_email' %}
+          <div class="au-node-type">Send email</div>
+          <div class="au-node-summary">{{ node.email_name or '(no email chosen yet)' }}</div>
+        {% elif node.node_type == 'if_else' %}
+          <div class="au-node-type">If / Else</div>
+          <div class="au-node-summary">Branches on how the last email was engaged with</div>
+        {% elif node.node_type == 'add_to_list' %}
+          <div class="au-node-type">Add to list</div>
+          <div class="au-node-summary">{{ list_names.get(node.config.list_id, 'List #' ~ node.config.list_id) if node.config.list_id is not none else '(no list chosen yet)' }}</div>
+        {% elif node.node_type == 'remove_from_list' %}
+          <div class="au-node-type">Remove from list</div>
+          <div class="au-node-summary">{{ list_names.get(node.config.list_id, 'List #' ~ node.config.list_id) if node.config.list_id is not none else '(no list chosen yet)' }}</div>
+        {% elif node.node_type == 'unsubscribe' %}
+          <div class="au-node-type">Unsubscribe</div>
+          <div class="au-node-summary">Ends the automation for this person</div>
+        {% endif %}
+        <div class="au-node-actions">
+          <button class="btn-s" onclick="auEdit('{{ node.node_key }}','{{ node.node_type }}')">Edit</button>
+          <button class="btn-s" onclick="auDelete('{{ node.node_key }}','{{ node.node_type }}')">Delete</button>
+        </div>
+      </div>
+      {% if node.node_type == 'if_else' %}
+        <div class="au-fork">
+          <div class="au-branch">
+            <div class="au-branch-label yes">If yes</div>
+            {% if node.true_handoff_name %}
+              <div class="au-handoff">→ hands off to <strong>{{ node.true_handoff_name }}</strong></div>
+            {% else %}
+              {{ render_chain(node.true_branch, node.node_key, 'main') }}
+            {% endif %}
+          </div>
+          <div class="au-branch">
+            <div class="au-branch-label no">If no</div>
+            {% if node.false_handoff_name %}
+              <div class="au-handoff">→ hands off to <strong>{{ node.false_handoff_name }}</strong></div>
+            {% else %}
+              {{ render_chain(node.false_branch, node.node_key, 'alt') }}
+            {% endif %}
+          </div>
+        </div>
+      {% else %}
+        {{ render_plus(node.node_key, 'main') }}
+      {% endif %}
+    {% endfor %}
+  {% endmacro %}
+  {{ render_chain(chain, 'trigger', 'main') }}
+</div>
+
+<!-- Edit modal, fields shown/hidden per node type by JS -->
+<div class="au-modal-backdrop" id="au-edit-modal">
+  <div class="au-modal">
+    <h3 id="au-edit-title">Edit node</h3>
+    <div class="au-field" id="au-f-delay">
+      <label>Wait</label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="au-delay-value" placeholder="e.g. 3" style="flex:0 0 80px;">
+        <select id="au-delay-unit" style="flex:1;"><option value="days">days</option><option value="hours">hours</option></select>
+      </div>
+    </div>
+    <div class="au-field" id="au-f-send">
+      <label>Email</label>
+      <select id="au-send-email">
+        <option value="">(choose an email)</option>
+        {% for e in emails %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="au-field" id="au-f-list">
+      <label>List</label>
+      <select id="au-list-id">
+        <option value="">(choose a list)</option>
+        {% for l in lists %}<option value="{{ l.id }}">{{ l.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div id="au-f-ifelse">
+      <div class="au-field">
+        <div class="au-cond-row"><div class="label">Opened quickly after send (likely a scanner, not a person)</div>
+          <select id="au-cond-bot"><option value="true">If yes</option><option value="false">If no</option></select></div>
+        <div class="au-cond-row"><div class="label">Opened slowly, or clicked (likely a real person)</div>
+          <select id="au-cond-human"><option value="true">If yes</option><option value="false" selected>If no</option></select></div>
+        <div class="au-cond-row"><div class="label">Never opened</div>
+          <select id="au-cond-none"><option value="true">If yes</option><option value="false" selected>If no</option></select></div>
+      </div>
+      <div class="au-field">
+        <label>"If yes" branch</label>
+        <select id="au-true-target">
+          <option value="">Continue with more steps in this automation</option>
+          {% for a in other_automations %}<option value="{{ a.id }}">Hand off to: {{ a.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="au-field">
+        <label>"If no" branch</label>
+        <select id="au-false-target">
+          <option value="">Continue with more steps in this automation</option>
+          {% for a in other_automations %}<option value="{{ a.id }}">Hand off to: {{ a.name }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+      <button class="btn-s" onclick="document.getElementById('au-edit-modal').classList.remove('open')">Cancel</button>
+      <button class="btn-p2" onclick="auSaveNode()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="au-modal-backdrop" id="au-enroll-modal">
+  <div class="au-modal">
+    <h3>Enroll leads</h3>
+    <div class="au-field">
+      <label>Segment</label>
+      <select id="au-enroll-segment" onchange="auPreviewSegment()">
+        <option value="">(choose a segment)</option>
+        {% for s in segments %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div id="au-enroll-preview" style="font-size:13px;color:var(--gray-500);margin-bottom:12px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+      <button class="btn-s" onclick="document.getElementById('au-enroll-modal').classList.remove('open')">Cancel</button>
+      <button class="btn-p2" onclick="auEnroll()">Enroll</button>
+    </div>
+    <div class="au-status" id="au-enroll-status"></div>
+  </div>
+</div>
+
+<script>
+const AUTOMATION_ID = {{ automation.id }};
+
+async function auSaveSettings(){
+  const payload = {
+    name: document.getElementById('au-name').value,
+    status: document.getElementById('au-status').value,
+    run_once_per_subscriber: document.getElementById('au-run-once').checked,
+  };
+  const r = await fetch('/api/automations/'+AUTOMATION_ID, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  if (!r.ok) { const j = await r.json(); alert(j.error || 'Save failed.'); return; }
+  location.reload();
+}
+
+function auTogglePalette(btn){
+  document.querySelectorAll('.au-palette.open').forEach(p => { if (p !== btn.nextElementSibling) p.classList.remove('open'); });
+  btn.nextElementSibling.classList.toggle('open');
+}
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('.au-plus-row')) document.querySelectorAll('.au-palette.open').forEach(p => p.classList.remove('open'));
+});
+
+async function auInsert(afterKey, branch, nodeType){
+  let config = {};
+  if (nodeType === 'delay') config = {unit: 'days', value: 1};
+  if (nodeType === 'add_to_list' || nodeType === 'remove_from_list') config = {list_id: null};
+  const r = await fetch(`/api/automations/${AUTOMATION_ID}/nodes`, {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({node_type: nodeType, after_node_key: afterKey, branch: branch, config: config})});
+  const j = await r.json();
+  if (!r.ok) { alert(j.error || 'Insert failed.'); return; }
+  location.reload();
+}
+
+async function auDelete(nodeKey, nodeType){
+  const msg = nodeType === 'if_else'
+    ? 'Delete this If/Else? Its "If no" branch will be disconnected along with it.'
+    : 'Delete this step?';
+  if (!confirm(msg)) return;
+  const r = await fetch(`/api/automations/${AUTOMATION_ID}/nodes/${nodeKey}/delete`, {method:'POST'});
+  if (!r.ok) { const j = await r.json(); alert(j.error || 'Delete failed.'); return; }
+  location.reload();
+}
+
+let editingNodeKey = null, editingNodeType = null;
+function auEdit(nodeKey, nodeType){
+  editingNodeKey = nodeKey; editingNodeType = nodeType;
+  document.getElementById('au-edit-title').textContent = 'Edit ' + nodeType.replace(/_/g, ' ');
+  ['au-f-delay','au-f-send','au-f-list','au-f-ifelse'].forEach(id => document.getElementById(id).style.display = 'none');
+  const nodeEl = document.querySelector(`.au-node[data-node-key="${nodeKey}"]`);
+  const config = JSON.parse(nodeEl.getAttribute('data-config') || '{}');
+  if (nodeType === 'delay') {
+    document.getElementById('au-f-delay').style.display = 'block';
+    document.getElementById('au-delay-value').value = config.value || 1;
+    document.getElementById('au-delay-unit').value = config.unit || 'days';
+  } else if (nodeType === 'send_email') {
+    document.getElementById('au-f-send').style.display = 'block';
+    document.getElementById('au-send-email').value = config.email_id || '';
+  } else if (nodeType === 'add_to_list' || nodeType === 'remove_from_list') {
+    document.getElementById('au-f-list').style.display = 'block';
+    document.getElementById('au-list-id').value = config.list_id || '';
+  } else if (nodeType === 'if_else') {
+    document.getElementById('au-f-ifelse').style.display = 'block';
+    const trueStates = config.true_states || ['opened_human_like'];
+    document.getElementById('au-cond-human').value = trueStates.includes('opened_human_like') ? 'true' : 'false';
+    document.getElementById('au-cond-bot').value = (config.middle_routing || 'false') === 'true' ? 'true' : 'false';
+    document.getElementById('au-cond-none').value = trueStates.includes('not_opened') ? 'true' : 'false';
+    document.getElementById('au-true-target').value = nodeEl.getAttribute('data-next-automation-id') || '';
+    document.getElementById('au-false-target').value = nodeEl.getAttribute('data-next-automation-id-alt') || '';
+  }
+  document.getElementById('au-edit-modal').classList.add('open');
+}
+
+async function auSaveNode(){
+  let config = {};
+  let payload = {};
+  if (editingNodeType === 'delay') {
+    config = {unit: document.getElementById('au-delay-unit').value, value: parseInt(document.getElementById('au-delay-value').value || '1', 10)};
+  } else if (editingNodeType === 'send_email') {
+    config = {email_id: parseInt(document.getElementById('au-send-email').value || '0', 10) || null};
+  } else if (editingNodeType === 'add_to_list' || editingNodeType === 'remove_from_list') {
+    config = {list_id: parseInt(document.getElementById('au-list-id').value || '0', 10) || null};
+  } else if (editingNodeType === 'if_else') {
+    const trueStates = [];
+    if (document.getElementById('au-cond-human').value === 'true') trueStates.push('opened_human_like');
+    if (document.getElementById('au-cond-none').value === 'true') trueStates.push('not_opened');
+    config = {
+      condition: 'engagement', source: 'last_send',
+      true_states: trueStates,
+      middle_routing: document.getElementById('au-cond-bot').value === 'true' ? 'true' : 'false',
+    };
+    payload.next_automation_id = parseInt(document.getElementById('au-true-target').value || '0', 10) || null;
+    payload.next_automation_id_alt = parseInt(document.getElementById('au-false-target').value || '0', 10) || null;
+  }
+  payload.config = config;
+  const r = await fetch(`/api/automations/${AUTOMATION_ID}/nodes/${editingNodeKey}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  if (!r.ok) { const j = await r.json(); alert(j.error || 'Save failed.'); return; }
+  location.reload();
+}
+
+function auOpenEnroll(){
+  document.getElementById('au-enroll-preview').textContent = '';
+  document.getElementById('au-enroll-status').className = 'au-status';
+  document.getElementById('au-enroll-status').textContent = '';
+  document.getElementById('au-enroll-modal').classList.add('open');
+}
+
+async function auPreviewSegment(){
+  const segmentId = document.getElementById('au-enroll-segment').value;
+  const preview = document.getElementById('au-enroll-preview');
+  if (!segmentId) { preview.textContent = ''; return; }
+  preview.textContent = 'Checking…';
+  const r = await fetch(`/api/segments/${segmentId}/preview`);
+  const j = await r.json();
+  preview.textContent = r.ok ? `${j.count} matching lead${j.count === 1 ? '' : 's'} right now.` : (j.error || 'Could not preview this segment.');
+}
+
+async function auEnroll(){
+  const status = document.getElementById('au-enroll-status');
+  const segmentId = document.getElementById('au-enroll-segment').value;
+  if (!segmentId) { status.className = 'au-status error'; status.textContent = 'Choose a segment first.'; return; }
+  status.className = 'au-status'; status.textContent = '';
+  const r = await fetch(`/api/automations/${AUTOMATION_ID}/enroll`, {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({segment_id: parseInt(segmentId, 10)})});
+  const j = await r.json();
+  if (!r.ok) { status.className = 'au-status error'; status.textContent = j.error || 'Enroll failed.'; return; }
+  status.className = 'au-status success';
+  status.textContent = `Enrolled ${j.enrolled} lead(s). Skipped: ${j.skipped_no_email} no email, ${j.skipped_suppressed} suppressed, ${j.skipped_nurture_owned + j.skipped_cluster_conflict} already active elsewhere.`;
+  setTimeout(() => location.reload(), 1800);
+}
+</script>
+{% endblock %}

@@ -29,7 +29,7 @@
 
 <p style="color:var(--gray-500); font-size:13px; margin-bottom:16px;">
   Leads a human is actively working — engaged onward. New and contacted leads (marketing's half) live in
-  <a href="/marketing/leads" style="color:var(--primary);">Leads</a>.
+  <a href="/marketing/lists" style="color:var(--primary);">Lists</a>.
   <span style="color:var(--gray-400);">{{ total }} total (excluded leads not shown).</span>
 </p>
 
@@ -45,7 +45,7 @@
 <div class="pl-board">
   {% for s in stages %}
   <div class="pl-col {% if s == 'won' %}pl-won{% elif s == 'lost' %}pl-lost{% endif %}">
-    <div class="pl-col-header"><span>{{ s|capitalize }}</span><a class="n" href="/marketing/leads?stage={{ s }}">{{ board[s]|length }}</a></div>
+    <div class="pl-col-header"><span>{{ s|capitalize }}</span><a class="n" href="/marketing/lists?stage={{ s }}">{{ board[s]|length }}</a></div>
     {% for l in board[s] %}
       <div class="pl-card" id="pl-card-{{ l.id }}" onclick="openLeadDetail({{ l.id }})" style="cursor:pointer;">
         <input type="checkbox" class="pl-check" data-id="{{ l.id }}" onclick="event.stopPropagation()" onchange="plUpdateBulkBar()">
@@ -79,8 +79,8 @@
     {% if not board[s] %}
       <div class="pl-empty">
         {% if s == 'engaged' %}
-          {% if contacted_count %}No one has replied yet. {{ contacted_count }} lead{{ 's' if contacted_count != 1 }} contacted and awaiting response &rarr; <a href="/marketing/leads?stage=contacted">view in Leads</a>
-          {% else %}No one has replied yet, and nothing is currently contacted either &mdash; <a href="/marketing/leads?stage=open">check the Leads queue</a>{% endif %}
+          {% if contacted_count %}No one has replied yet. {{ contacted_count }} lead{{ 's' if contacted_count != 1 }} contacted and awaiting response &rarr; <a href="/marketing/lists?stage=contacted">view in Lists</a>
+          {% else %}No one has replied yet, and nothing is currently contacted either &mdash; <a href="/marketing/lists?stage=open">check the Lists queue</a>{% endif %}
         {% elif s == 'qualified' %}
           {% if board['engaged']|length %}Nothing qualified yet. {{ board['engaged']|length }} lead{{ 's' if board['engaged']|length != 1 }} in Engaged, just left of here.
           {% else %}Nothing qualified yet.{% endif %}

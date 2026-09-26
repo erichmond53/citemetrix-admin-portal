@@ -15,6 +15,7 @@ sys.path.insert(0, BASE)
 from dotenv import load_dotenv
 load_dotenv(os.path.join(BASE, ".env"))
 
+import json
 import pymysql
 from email_helper import send_email
 import leads_drip
@@ -58,6 +59,23 @@ def _send(to, subject, body_text, body_html=None):
     )
 
 
+def _log_run(cur, conn, branch_result, result):
+    """CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS5: a run that completes
+    without error but blocks/suppresses real sends must not look identical, from the
+    portal's point of view, to a run with nothing to do. The cron.log line below has
+    always carried this data -- it just had no reader. This is the reader: one row per
+    run, cheap enough to write every hour forever, queried by the dashboard's job-health
+    check the same way CRON_STALENESS_CHECKS already reads log mtimes. total_problem is
+    what that check keys off; 0 means a clean run even if checked==0 (nothing was due)."""
+    total_problem = result['failed'] + result['skipped_blocked']
+    detail = {**branch_result, **result}
+    cur.execute(
+        "INSERT INTO cron_run_log (job_name, total_processed, total_problem, detail_json) VALUES (%s,%s,%s,%s)",
+        ('drip_cron', result['checked'], total_problem, json.dumps(detail))
+    )
+    conn.commit()
+
+
 def main():
     conn = get_admin_db()
     product_conn = get_product_db()
@@ -68,6 +86,7 @@ def main():
             # campaign's Step 1 (CITEMETRIX-Drip-Campaigns.md branching summary, point 2).
             branch_result = leads_drip.process_check_completions(cur, conn, pcur)
             result = leads_drip.process_due_enrollments(cur, conn, _send, BASE_URL, max_sends=50)
+            _log_run(cur, conn, branch_result, result)
     finally:
         conn.close()
         product_conn.close()

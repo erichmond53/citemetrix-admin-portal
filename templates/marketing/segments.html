@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Segments{% endblock %}
+{% block content %}
+<style>
+.sg-new { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px; margin-bottom:24px; }
+.sg-new .fg { margin-bottom:14px; max-width:420px; }
+.sg-new label { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+.sg-new input[type=text] { width:100%; padding:10px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box; }
+.sg-cond-row { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+.sg-cond-row select, .sg-cond-row input { padding:8px 10px; border:1px solid var(--gray-200); border-radius:8px; font-size:13px; }
+.sg-cond-row button { background:none; border:none; color:var(--gray-500); font-size:16px; cursor:pointer; padding:2px 8px; }
+.sg-add-btn { background:var(--gray-100); border:1px solid var(--gray-200); border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer; margin-bottom:14px; }
+.sg-card { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:16px 20px; margin-bottom:12px; }
+.sg-meta { font-size:13px; color:var(--gray-500); margin-top:4px; }
+.sg-status { margin-top:12px; padding:10px 14px; border-radius:8px; font-size:14px; display:none; }
+.sg-status.success{ display:block; background:#F0FDF4; color:#166534 } .sg-status.error{ display:block; background:#FEF2F2; color:#991B1B }
+</style>
+
+<p style="color:var(--gray-500); font-size:13px; margin-bottom:14px;">
+  One master lead pool, filtered by tags/lists/fields — not a separate list per source. Every condition in a
+  segment is ANDed together; a segment's member count is evaluated live, not a stored snapshot.
+</p>
+
+<div class="sg-new">
+  <div class="fg"><label>Segment name</label><input type="text" id="sg-name" placeholder="e.g. Marblism, engaged this month"></div>
+  <div id="sg-conditions"></div>
+  <button type="button" class="sg-add-btn" onclick="sgAddCondition()">+ Add condition</button>
+  <div>
+    <button class="btn btn-primary" onclick="sgCreate()">Create segment</button>
+  </div>
+  <div class="sg-status" id="sg-status"></div>
+</div>
+
+{% for s in segments %}
+<div class="sg-card">
+  <strong>{{ s.name }}</strong>
+  <div class="sg-meta">{{ s.member_count }} matching lead{{ 's' if s.member_count != 1 else '' }} · {{ s.summary }}</div>
+</div>
+{% else %}
+<div class="card" style="text-align:center;color:var(--gray-500);padding:40px;">No segments yet. Build one above, then use it from an automation's "Trigger — batch enroll" card.</div>
+{% endfor %}
+
+<script>
+const SG_TAGS = {{ tags|tojson }};
+const SG_LISTS = {{ lists|tojson }};
+let sgConditionCount = 0;
+
+function sgFieldValueHtml(idx, field){
+  if (field === 'tag') {
+    const opts = SG_TAGS.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+    return `<select class="sg-cond-op" data-idx="${idx}"><option value="has">has</option><option value="not_has">doesn't have</option></select>
+            <select class="sg-cond-value" data-idx="${idx}">${opts}</select>`;
+  }
+  if (field === 'list') {
+    const opts = SG_LISTS.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+    return `<input type="hidden" class="sg-cond-op" data-idx="${idx}" value="in">
+            <select class="sg-cond-value" data-idx="${idx}">${opts}</select>`;
+  }
+  if (field === 'original_source') {
+    const opts = ['in_person','direct','inbound','beta','chat','contact_form','demo_request'].map(v => `<option value="${v}">${v}</option>`).join('');
+    return `<input type="hidden" class="sg-cond-op" data-idx="${idx}" value="eq">
+            <select class="sg-cond-value" data-idx="${idx}">${opts}</select>`;
+  }
+  if (field === 'stage') {
+    const opts = ['new','contacted','engaged','qualified','won','lost'].map(v => `<option value="${v}">${v}</option>`).join('');
+    return `<input type="hidden" class="sg-cond-op" data-idx="${idx}" value="eq">
+            <select class="sg-cond-value" data-idx="${idx}">${opts}</select>`;
+  }
+  if (field === 'company' || field === 'title') {
+    return `<input type="hidden" class="sg-cond-op" data-idx="${idx}" value="contains">
+            <input type="text" class="sg-cond-value" data-idx="${idx}" placeholder="contains...">`;
+  }
+  if (field === 'created_at') {
+    return `<input type="hidden" class="sg-cond-op" data-idx="${idx}" value="between">
+            <input type="date" class="sg-cond-value-a" data-idx="${idx}"> to
+            <input type="date" class="sg-cond-value-b" data-idx="${idx}">`;
+  }
+  return '';
+}
+
+function sgAddCondition(){
+  const idx = sgConditionCount++;
+  const wrap = document.getElementById('sg-conditions');
+  const row = document.createElement('div');
+  row.className = 'sg-cond-row';
+  row.id = `sg-cond-${idx}`;
+  row.innerHTML = `
+    <select class="sg-cond-field" data-idx="${idx}" onchange="sgFieldChanged(${idx})">
+      <option value="tag">Tag</option>
+      <option value="list">List</option>
+      <option value="original_source">Source</option>
+      <option value="stage">Stage</option>
+      <option value="company">Company</option>
+      <option value="title">Title</option>
+      <option value="created_at">Created</option>
+    </select>
+    <span class="sg-cond-value-wrap" id="sg-cond-value-wrap-${idx}">${sgFieldValueHtml(idx, 'tag')}</span>
+    <button type="button" onclick="document.getElementById('sg-cond-${idx}').remove()">&times;</button>
+  `;
+  wrap.appendChild(row);
+}
+
+function sgFieldChanged(idx){
+  const field = document.querySelector(`.sg-cond-field[data-idx="${idx}"]`).value;
+  document.getElementById(`sg-cond-value-wrap-${idx}`).innerHTML = sgFieldValueHtml(idx, field);
+}
+
+function sgCollectConditions(){
+  const rows = document.querySelectorAll('.sg-cond-row');
+  const conditions = [];
+  rows.forEach(row => {
+    const field = row.querySelector('.sg-cond-field').value;
+    if (field === 'created_at') {
+      const a = row.querySelector('.sg-cond-value-a').value;
+      const b = row.querySelector('.sg-cond-value-b').value;
+      if (a && b) conditions.push({field, op: 'between', value: [a, b]});
+    } else {
+      const op = row.querySelector('.sg-cond-op').value;
+      let value = row.querySelector('.sg-cond-value').value;
+      if (field === 'tag' || field === 'list') value = parseInt(value, 10);
+      if (value !== '' && value !== null && !(typeof value === 'number' && Number.isNaN(value))) {
+        conditions.push({field, op, value});
+      }
+    }
+  });
+  return conditions;
+}
+
+async function sgCreate(){
+  const status = document.getElementById('sg-status');
+  const name = document.getElementById('sg-name').value.trim();
+  const conditions = sgCollectConditions();
+  if (!name) { status.className = 'sg-status error'; status.textContent = 'Enter a segment name.'; return; }
+  if (!conditions.length) { status.className = 'sg-status error'; status.textContent = 'Add at least one condition.'; return; }
+  const r = await fetch('/api/segments', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name, conditions: {all: conditions}})});
+  const j = await r.json();
+  if (!r.ok) { status.className = 'sg-status error'; status.textContent = j.error || 'Failed to create segment.'; return; }
+  location.reload();
+}
+
+sgAddCondition();
+</script>
+{% endblock %}

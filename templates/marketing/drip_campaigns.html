@@ -24,7 +24,7 @@
 <div class="dc-card">
   <a href="/marketing/drip-campaigns/{{ c.id }}">
     <h3>{{ c.name }} <span class="dc-badge {{ 'active' if c.active else 'paused' }}">{{ 'active' if c.active else 'paused' }}</span></h3>
-    <div class="dc-meta">{{ c.step_count }} step{{ 's' if c.step_count != 1 else '' }} · {{ c.enrolled_count }} enrolled ({{ c.active_count }} active, {{ c.completed_count }} completed){% if c.batch_name %} · seeded from "{{ c.batch_name }}"{% endif %}</div>
+    <div class="dc-meta">{{ c.step_count }} step{{ 's' if c.step_count != 1 else '' }} · {{ c.enrolled_count }} enrolled ({{ c.active_count }} active, {{ c.completed_count }} completed){% if c.batch_name %} · seeded from "{{ c.batch_name }}"{% endif %} · {{ c.sent_count }} sent{% if c.sent_count %}, {{ c.opened_count }} opened ({{ (c.opened_count / c.sent_count * 100) | round(1) }}%){% endif %}{% if c.blocked_count %} · <span style="color:#991B1B;font-weight:600;">{{ c.blocked_count }} blocked</span>{% endif %}</div>
   </a>
 </div>
 {% else %}

@@ -1003,11 +1003,12 @@ def process_due_enrollments(admin_cursor, admin_conn, send_email_fn, base_url: s
             )
             following = admin_cursor.fetchone()
             if following:
-                admin_cursor.execute(
-                    "SELECT enrolled_at FROM drip_enrollments WHERE id=%s", (row['enrollment_id'],)
-                )
-                enrolled_at = admin_cursor.fetchone()['enrolled_at']
-                new_due = enrolled_at + timedelta(days=following['day_offset'])
+                # day_offset on step N+1 is days after step N actually SENT, not days
+                # after original enrollment (that was the bug behind the 2026-09-08
+                # same-day step1+step2 incident -- a late-sending step1 left step2's
+                # enrolled_at-anchored due date already in the past). Anchor on now,
+                # the moment this step's send just completed, instead.
+                new_due = datetime.now() + timedelta(days=following['day_offset'])
                 admin_cursor.execute(
                     "UPDATE drip_enrollments SET current_step=%s, next_send_due_at=%s, last_sent_at=NOW() WHERE id=%s",
                     (next_step_order, new_due.strftime('%Y-%m-%d %H:%M:%S'), row['enrollment_id'])

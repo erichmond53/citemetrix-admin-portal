@@ -53,11 +53,24 @@
     <div style="color:var(--gray-500);font-size:13px;">
       Status: <strong>{{ 'Active' if campaign.active else 'Paused' }}</strong> ·
       {{ status_counts.get('active', 0) }} active · {{ status_counts.get('completed', 0) }} completed ·
-      {{ status_counts.get('unsubscribed', 0) }} unsubscribed
+      {{ status_counts.get('unsubscribed', 0) }} unsubscribed{% if status_counts.get('blocked', 0) %} · <span style="color:#991B1B;font-weight:600;">{{ status_counts.get('blocked', 0) }} blocked</span>{% endif %}{% if status_counts.get('suppressed', 0) %} · {{ status_counts.get('suppressed', 0) }} suppressed{% endif %}
     </div>
   </div>
   <button class="btn-s" onclick="dcToggle({{ campaign.id }})">{{ 'Pause campaign' if campaign.active else 'Activate campaign' }}</button>
 </div>
+
+{% if blocked_leads %}
+<div class="card" style="margin-bottom:24px;padding:18px 20px;border:1px solid #FCA5A5;">
+  <h3 style="margin:0 0 14px;font-size:14px;color:#991B1B;">Blocked / suppressed — {{ blocked_leads|length }} lead{{ 's' if blocked_leads|length != 1 else '' }} not receiving this sequence</h3>
+  <div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;">CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS5: the exact reason a send was refused, verbatim from the gate that refused it -- this used to only exist in a database table nothing displayed.</div>
+  {% for b in blocked_leads %}
+    <div style="padding:8px 0;border-top:1px solid var(--gray-100);font-size:13px;">
+      <strong>{{ b.email }}</strong> <span style="color:var(--gray-500);">({{ b.enr_status }}, {{ b.sent_at.strftime('%Y-%m-%d %H:%M') if b.sent_at else '' }})</span><br>
+      <span style="color:#991B1B;">{{ b.error }}</span>
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 {% if funnel %}
 <div class="card" style="margin-bottom:24px;padding:18px 20px;">
@@ -67,7 +80,7 @@
     <div class="cd-funnel-row">
       <span style="width:90px;">Step {{ f.step_order }}</span>
       <div class="cd-funnel-bar-wrap"><div class="cd-funnel-bar" style="width:{{ (f.reached / max_reached * 100) if max_reached else 0 }}%;"></div></div>
-      <span style="width:110px;text-align:right;color:var(--gray-500);">{{ f.reached }} reached · {{ f.sent_count }} sent</span>
+      <span style="width:280px;text-align:right;color:var(--gray-500);">{{ f.reached }} reached · {{ f.sent_count }} sent · {{ f.opened_count }} opened{% if f.sent_count %} ({{ (f.opened_count / f.sent_count * 100) | round(1) }}%){% endif %} · {{ f.clicked_count }} clicked</span>
     </div>
   {% endfor %}
 </div>
@@ -97,7 +110,7 @@
       <button class="btn-s" onclick="dcDeleteStep({{ s.id }})">Delete</button>
     </div>
     <div class="cd-row">
-      <div class="cd-field"><label>Days after being added to this list</label><input type="number" class="cd-day-offset" value="{{ s.day_offset }}"></div>
+      <div class="cd-field"><label>{{ "Days after being added to this list" if s.step_order == 1 else "Days after the previous step sends" }}</label><input type="number" class="cd-day-offset" value="{{ s.day_offset }}"></div>
       <div class="cd-field" style="flex:0 0 200px;"><label><input type="checkbox" class="cd-is-survey" {{ 'checked' if s.is_survey_step }}> This step is the survey invite</label></div>
       <div class="cd-field" style="flex:0 0 100px;"><label>Survey epoch</label><input type="text" class="cd-survey-epoch" value="{{ s.survey_epoch or '' }}" placeholder="e.g. 1"></div>
     </div>

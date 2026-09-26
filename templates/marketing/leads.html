@@ -4,427 +4,69 @@
 
 {% block content %}
 <style>
-.ld-modal-backdrop { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.45); z-index:200; align-items:center; justify-content:center; }
-.ld-modal-backdrop.open { display:flex; }
-.ld-modal { background:#fff; border-radius:12px; padding:24px; width:100%; max-width:480px; box-shadow:0 20px 60px rgba(0,0,0,0.25); }
-.ld-modal h3 { margin:0 0 16px; font-size:17px; }
-.ld-modal .fg { margin-bottom:14px; }
-.ld-modal label { display:block; font-size:13px; font-weight:500; margin-bottom:6px; color:var(--gray-700); }
-.ld-modal input[type=text] { width:100%; padding:10px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box; }
-.ld-status { margin-top:12px; padding:10px 14px; border-radius:8px; font-size:14px; display:none; }
-.ld-status.success{ display:block; background:#F0FDF4; color:#166534 } .ld-status.error{ display:block; background:#FEF2F2; color:#991B1B }
-.chip { display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:20px; font-size:13px; font-weight:500; text-decoration:none; border:1px solid var(--gray-200); color:var(--gray-600); margin:0 8px 8px 0; }
-.chip.active { background:var(--primary); border-color:var(--primary); color:#fff; }
-.chip .n { font-variant-numeric:tabular-nums; opacity:0.85; }
-/* Actions column (Edit/Exclude) pinned to the right edge of a horizontally-scrolling table --
-   this table is wider than most viewports, and a plain scrolling column has zero visual cue
-   that there's more to the right, so the only way to find Edit was to already know to scroll
-   (2026-09-04: this is exactly why Eric couldn't find Edit lead the first time). Sticky keeps
-   it in view regardless of scroll position; the shadow reads as "floating above" scrolled content. */
-.le-actions-col { position:sticky; right:0; background:#fff; width:48px; }
-/* 2026-09-04: two pill buttons (Edit/Exclude) ate enough width that Source scrolled out of
-   view even with the actions column pinned -- a kebab menu is a fraction of the width and
-   still keeps both actions one click away. Pinning Actions alone didn't actually surface
-   Source though: Source sits several columns BEFORE Actions (Score/Source/Sequence/Status/
-   Actions), so a narrower Actions column changes nothing about Source's own scroll position
-   -- Source needed its own pin, right next to Actions, to actually be "always visible" the
-   way Eric asked. Actions gets a fixed width so Source's sticky offset lines up against it. */
-.le-source-col { position:sticky; right:48px; background:#fff; box-shadow:-6px 0 6px -6px rgba(0,0,0,0.15); max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.le-menu-wrap { position:relative; display:inline-block; }
-.le-menu-btn { background:none; border:1px solid transparent; font-size:18px; line-height:1; padding:4px 9px; cursor:pointer; color:var(--gray-500); border-radius:6px; }
-.le-menu-btn:hover { background:var(--gray-100); border-color:var(--gray-200); }
-.le-menu-dropdown { display:none; position:absolute; right:0; top:calc(100% + 4px); background:#fff; border:1px solid var(--gray-200); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.15); min-width:130px; z-index:50; overflow:hidden; }
-.le-menu-dropdown.open { display:block; }
-.le-menu-dropdown button { display:block; width:100%; text-align:left; padding:9px 14px; background:none; border:none; font-size:13px; color:var(--gray-700); cursor:pointer; }
-.le-menu-dropdown button:hover { background:var(--gray-50); }
-.le-menu-dropdown form { margin:0; }
+.lc-tile { display:block; text-decoration:none; color:inherit; transition:box-shadow .15s, transform .15s; }
+.lc-tile:hover { box-shadow:0 4px 14px rgba(0,0,0,0.08); transform:translateY(-1px); }
+.lc-tile.zero { opacity:.55; }
 </style>
 
-<p style="color:var(--gray-500); font-size:13px; margin-bottom:14px;">
-  One list, all paths — in-person, direct (CSV import), and inbound (the public ModelScore free check).
-  {% if f_campaign or f_source or f_landing %}
-    Filtered by
-    {% if f_campaign %}<strong style="color:var(--gray-700);">campaign = {{ f_campaign }}</strong>{% endif %}
-    {% if f_source %}{% if f_campaign %} · {% endif %}<strong style="color:var(--gray-700);">source = {{ f_source }}</strong>{% endif %}
-    {% if f_landing %}{% if f_campaign or f_source %} · {% endif %}<strong style="color:var(--gray-700);">landing page = {{ f_landing }}</strong>{% endif %}
-    &nbsp;<a href="/marketing/leads" style="color:var(--primary);">clear ✕</a>
-  {% endif %}
+<p style="color:var(--gray-500); font-size:13px; margin-bottom:20px;">
+  Visibility into the effectiveness of our marketing — every tile is a real interaction someone had with
+  us, never just a send or an enrollment. Click a number to see who. Full membership and provenance live
+  under <a href="/marketing/lists" style="color:var(--primary);">Lists</a>.
 </p>
 
-<div style="margin-bottom:10px;">
-  <a href="/marketing/leads{% if f_stage or show_suppressed %}?{{ 'stage=' ~ f_stage if f_stage }}{% if f_stage and show_suppressed %}&{% endif %}{{ 'suppressed=1' if show_suppressed }}{% endif %}" class="chip {% if not f_path %}active{% endif %}">All <span class="n">{{ path_counts.all }}</span></a>
-  <a href="/marketing/leads?path=in_person" class="chip {% if f_path == 'in_person' %}active{% endif %}">In-Person <span class="n">{{ path_counts.in_person }}</span></a>
-  <a href="/marketing/leads?path=direct" class="chip {% if f_path == 'direct' %}active{% endif %}">Direct <span class="n">{{ path_counts.direct }}</span></a>
-  <a href="/marketing/leads?path=inbound" class="chip {% if f_path == 'inbound' %}active{% endif %}">Inbound <span class="n">{{ path_counts.inbound }}</span></a>
-  {% if path_counts.get('beta') %}<a href="/marketing/leads?path=beta" class="chip {% if f_path == 'beta' %}active{% endif %}">Beta <span class="n">{{ path_counts.beta }}</span></a>{% endif %}
-  {% if path_counts.get('chat') %}<a href="/marketing/leads?path=chat" class="chip {% if f_path == 'chat' %}active{% endif %}">Chat <span class="n">{{ path_counts.chat }}</span></a>{% endif %}
-</div>
-
-<div style="margin-bottom:16px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
-  <form method="GET" style="display:flex; align-items:center; gap:8px;">
-    {% if f_path %}<input type="hidden" name="path" value="{{ f_path }}">{% endif %}
-    <label style="font-size:13px; color:var(--gray-500);">Stage</label>
-    <select name="stage" onchange="this.form.submit()" style="padding:6px 10px; border:1px solid var(--gray-200); border-radius:6px; font-size:13px;">
-      <option value="open" {% if f_stage == 'open' %}selected{% endif %}>Open &mdash; New + Contacted ({{ stage_counts.get('new', 0) + stage_counts.get('contacted', 0) }})</option>
-      <option value="" {% if f_stage == '' %}selected{% endif %}>All</option>
-      {% for s in ['new','contacted','engaged','qualified','won','lost'] %}
-        <option value="{{ s }}" {% if f_stage == s %}selected{% endif %}>{{ s|capitalize }} ({{ stage_counts.get(s, 0) }})</option>
-      {% endfor %}
-    </select>
-  </form>
-  <a href="/marketing/leads{% if f_path %}?path={{ f_path }}&{% else %}?{% endif %}suppressed=1" class="chip" style="{% if show_suppressed %}background:var(--danger);border-color:var(--danger);color:#fff;{% endif %} margin:0;">Suppressed <span class="n">{{ suppressed_count }}</span></a>
-  {% if show_excluded %}
-    <a href="/marketing/leads" style="color:var(--primary);font-size:13px;">&larr; Back to active leads</a>
-  {% else %}
-    <a href="/marketing/leads?show=excluded" style="color:var(--gray-500);font-size:13px;">Show excluded ({{ excluded_count }})</a>
-  {% endif %}
-  <button type="button" class="btn btn-secondary" style="margin-left:auto;" onclick="document.getElementById('la-modal-backdrop').classList.add('open')">&#128100; Add lead</button>
-  <button type="button" class="btn btn-primary" onclick="document.getElementById('ld-modal-backdrop').classList.add('open')">&#128228; Import CSV</button>
-</div>
-
-{% if by_segment %}
-<div class="card" style="margin-bottom:22px;">
-  <div class="stat-label" style="margin-bottom:10px;">Inbound, by segment</div>
-  {% for s in by_segment %}
-    <a href="/marketing/leads?path=inbound&segment={{ s.seg|urlencode }}" style="display:inline-block;margin:0 8px 8px 0;text-decoration:none;">
-      <span style="background:{{ {'agency':'#dbeafe','comparison':'#ede9fe','generic':'#f3f4f6'}[s.seg] }};border-radius:16px;padding:4px 12px;font-size:13px;color:var(--gray-800);text-transform:capitalize;">
-        {{ s.seg }} <strong>{{ s.n }}</strong></span>
-    </a>
-  {% endfor %}
-</div>
-{% endif %}
-
-<div class="card">
-  <div class="card-header"><div class="card-title">Lead records ({{ total_filtered }}{% if total_pages > 1 %}, showing {{ ((page-1)*50)+1 }}&ndash;{{ ((page-1)*50)+leads|length }}{% endif %})</div></div>
-  <div style="overflow-x:auto;">
-    <table class="table">
-      <thead><tr>
-        <th>Date</th><th>Email</th><th>Name / Brand</th><th>Path</th><th>Stage</th><th>Segment</th>
-        <th style="text-align:right;">Score</th><th class="le-source-col">Source</th><th>Sequence</th><th>Status</th><th class="le-actions-col">Actions</th>
-      </tr></thead>
-      <tbody>
-      {% for l in leads %}
-        <tr onclick="openLeadDetail({{ l.id }})" style="cursor:pointer;">
-          <td style="white-space:nowrap;color:var(--gray-500);">{{ l.created_at.strftime('%Y-%m-%d') if l.created_at else '' }}</td>
-          <td style="color:var(--gray-800);font-weight:500;">{% if l.email %}{{ l.email }}{% else %}<span style="color:var(--gray-400);font-weight:400;" title="No email on file -- LinkedIn-only contact">— (LinkedIn only)</span>{% endif %}</td>
-          <td style="color:var(--gray-600);">{{ l.brand_name or l.company or ((l.first_name or '') ~ ' ' ~ (l.last_name or ''))|trim or '—' }}</td>
-          <td style="white-space:nowrap;">
-            {% if l.original_source == 'inbound' %}<span class="badge badge-info">Inbound</span>
-            {% elif l.original_source == 'direct' %}<span class="badge" style="background:var(--gray-100);color:var(--gray-600);">Direct</span>
-            {% elif l.original_source == 'in_person' %}<span class="badge" style="background:#fef3c7;color:#92400e;">In-Person</span>
-            {% elif l.original_source == 'beta' %}<span class="badge" style="background:#ede9fe;color:#6d28d9;">Beta</span>
-            {% elif l.original_source == 'chat' %}<span class="badge" style="background:#dcfce7;color:#166534;">Chat</span>
-            {% else %}<span class="badge" style="background:var(--gray-100);color:var(--gray-600);">{{ l.original_source|capitalize }}</span>{% endif %}
-          </td>
-          <td style="text-transform:capitalize;color:var(--gray-600);">{{ l.stage }}</td>
-          <td style="white-space:nowrap;">
-            {% if l.segment == 'agency' %}<span class="badge badge-info">Agency</span>
-            {% elif l.segment == 'comparison' %}<span class="badge" style="background:#ede9fe;color:#6d28d9;">Comparison{% if l.competitor %} &middot; {{ l.competitor }}{% endif %}</span>
-            {% elif l.segment == 'generic' %}<span class="badge" style="background:var(--gray-100);color:var(--gray-500);">Generic</span>
-            {% else %}<span style="color:var(--gray-300);">—</span>{% endif %}
-          </td>
-          <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:{{ 'var(--danger)' if (l.model_score is not none and l.model_score < 30) else ('var(--warning)' if (l.model_score is not none and l.model_score < 60) else 'var(--gray-800)') }};">{{ l.model_score if l.model_score is not none else '—' }}</td>
-          <td class="le-source-col" title="{{ l.utm_source or l.ai_referral_platform or '' }}" style="{% if not l.utm_source %}color:var(--gray-400);{% else %}color:var(--gray-700);{% endif %}">{{ l.utm_source or l.ai_referral_platform or '—' }}</td>
-          <td style="white-space:nowrap;font-size:13px;">
-            {% if l.enrollment %}
-              {% if l.enrollment.status == 'active' %}<span class="badge badge-success">Active</span>
-              {% elif l.enrollment.status == 'completed' %}<span class="badge" style="background:var(--gray-100);color:var(--gray-600);">Completed</span>
-              {% elif l.enrollment.status in ['suppressed','blocked','cancelled'] %}<span class="badge badge-danger">{{ l.enrollment.status|capitalize }}</span>
-              {% else %}<span class="badge" style="background:var(--gray-100);color:var(--gray-600);">{{ l.enrollment.status|capitalize }}</span>{% endif %}
-            {% elif l.wp_nurture_owned %}<span style="color:var(--gray-400);">WordPress (draining)</span>
-            {% else %}<span style="color:var(--gray-300);">—</span>{% endif %}
-          </td>
-          <td>
-            {% if l.excluded %}<span class="badge" style="background:var(--gray-200);color:var(--gray-600);">Excluded</span>
-            {% elif l.suppressed_at %}<span class="badge badge-danger">{{ l.suppression_reason|capitalize if l.suppression_reason else 'Suppressed' }}</span>
-            {% elif l.stage == 'won' %}<span class="badge badge-success">Won</span>
-            {% else %}<span class="badge" style="background:var(--gray-100);color:var(--gray-600);">{{ l.stage|capitalize }}</span>{% endif %}
-          </td>
-          <td style="white-space:nowrap;text-align:right;" class="le-actions-col" onclick="event.stopPropagation()">
-            <div class="le-menu-wrap">
-              <button type="button" class="le-menu-btn" onclick="leToggleMenu(event, {{ l.id }})">&#8942;</button>
-              <div class="le-menu-dropdown" id="le-menu-{{ l.id }}">
-                <button type="button"
-                  onclick='leEdit({{ l.id }}, {{ (l.first_name or "")|tojson }}, {{ (l.last_name or "")|tojson }}, {{ (l.company or "")|tojson }}, {{ (l.title or "")|tojson }}, {{ (l.phone or "")|tojson }}, {{ (l.linkedin_url or "")|tojson }}, {{ (l.source_override or "")|tojson }})'>Edit</button>
-                <form method="POST" action="/marketing/leads/toggle"><input type="hidden" name="id" value="{{ l.id }}"><button type="submit">{{ 'Restore' if l.excluded else 'Exclude' }}</button></form>
-              </div>
-            </div>
-          </td>
-        </tr>
-      {% endfor %}
-      {% if not leads %}<tr><td colspan="11" style="color:var(--gray-400);">No leads match this filter yet.</td></tr>{% endif %}
-      </tbody>
-    </table>
-  </div>
-  {% if total_pages > 1 %}
-  <div style="display:flex; align-items:center; justify-content:center; gap:12px; padding:14px; border-top:1px solid var(--gray-200);">
-    {% if page > 1 %}<a href="{{ url_for('marketing_leads', **dict(request.args, page=page-1)) }}" class="chip">&larr; Prev</a>{% else %}<span class="chip" style="opacity:.4; pointer-events:none;">&larr; Prev</span>{% endif %}
-    <span style="color:var(--gray-500); font-size:13px;">Page {{ page }} of {{ total_pages }}</span>
-    {% if page < total_pages %}<a href="{{ url_for('marketing_leads', **dict(request.args, page=page+1)) }}" class="chip">Next &rarr;</a>{% else %}<span class="chip" style="opacity:.4; pointer-events:none;">Next &rarr;</span>{% endif %}
-  </div>
-  {% endif %}
-</div>
-
-{% if batches %}
-<div class="card" style="margin-top:20px;">
-  <div class="card-header"><div class="card-title">Import batches &amp; events</div></div>
-  {% if not neverbounce_configured %}
-    <p style="color:var(--gray-500);font-size:13px;margin:-4px 0 14px;">Email verification isn't configured yet (<code>NEVERBOUNCE_API_KEY</code> not set) — the Verify button below will fail until it's added.</p>
-  {% endif %}
-  <div style="overflow-x:auto;">
-    <table class="table">
-      <thead><tr><th>Batch</th><th>Type</th><th>Path</th><th>Source</th><th>New</th><th>Duplicates skipped</th><th>Current leads</th><th>Verification</th><th>Uploaded</th><th></th></tr></thead>
-      <tbody>
-      {% for b in batches %}
-        <tr id="ld-batch-row-{{ b.id }}">
-          <td>{{ b.name }}</td>
-          <td>{% if b.batch_kind == 'show' %}<span class="badge" style="background:#fef3c7;color:#92400e;">Event</span>{% else %}<span class="badge" style="background:var(--gray-100);color:var(--gray-600);">CSV import</span>{% endif %}</td>
-          <td style="text-transform:capitalize;">{{ b.batch_path.replace('_',' ') }}</td>
-          <td>{{ b.source or '—' }}</td>
-          <td>{{ b.new_count }}</td>
-          <td style="color:var(--gray-500);">{{ b.dup_count }}</td>
-          <td>{{ b.current_lead_count }}</td>
-          <td class="ld-verify-cell">
-            {% if b.verify_job_status == 'submitted' %}
-              <span style="color:var(--gray-500);">Verifying…</span>
-            {% elif b.unverified_count == 0 and b.current_lead_count > 0 %}
-              <span style="color:#059669;">{{ b.valid_count }} valid</span>{% if b.bad_count %}, <span style="color:var(--danger);">{{ b.bad_count }} bad (suppressed)</span>{% endif %}{% if b.review_count %}, <span style="color:#b45309;">{{ b.review_count }} review</span>{% endif %}
-            {% elif b.current_lead_count > 0 %}
-              <span style="color:var(--gray-400);">{{ b.unverified_count }} unverified</span>
-            {% else %}
-              <span style="color:var(--gray-400);">—</span>
-            {% endif %}
-          </td>
-          <td style="color:var(--gray-500);">{{ b.created_at }}</td>
-          <td>
-            {% if b.unverified_count %}
-              <button type="button" class="btn btn-secondary" style="padding:5px 10px;font-size:12px;" onclick="ldVerify({{ b.id }})" id="ld-verify-btn-{{ b.id }}">Verify {{ b.unverified_count }}</button>
-            {% endif %}
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
-
-<div class="ld-modal-backdrop" id="ld-modal-backdrop">
-  <div class="ld-modal">
-    <h3>Import CSV</h3>
-    <div class="fg"><label>Path</label>
-      <select id="ld-path" style="width:100%; padding:9px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box;">
-        <option value="direct">Direct</option>
-        <option value="in_person">In-Person</option>
-      </select>
+<div class="grid grid-4" style="margin-bottom:16px;">
+  <a href="/marketing/lists?interaction=free_check" class="lc-tile {{ 'zero' if not tiles.free_check }}">
+    <div class="stat-card">
+      <div class="stat-label">Free Check</div>
+      <div class="stat-value">{{ "{:,}".format(tiles.free_check) }}</div>
+      <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Ran a free ModelScore check</div>
     </div>
-    <div class="fg"><label>Batch name</label><input type="text" id="ld-batch-name" placeholder="e.g. Marblism batch 2026-09-03"></div>
-    <div class="fg"><label>Source (optional)</label><input type="text" id="ld-source" placeholder="e.g. Marblism LinkedIn"></div>
-    <div style="font-size:12px;color:var(--gray-500);margin-bottom:16px;">CSV needs at least an email column (Email / Name or First/Last Name / Company all auto-detected). Leads already in the system (by email) are skipped, not re-added.</div>
-    <div style="display:flex; gap:10px;">
-      <label class="btn btn-primary" style="cursor:pointer;">&#128228; Choose file & upload<input type="file" id="ld-file" accept=".csv,text/csv" style="display:none;" onchange="ldUpload()"></label>
-      <button type="button" class="btn btn-secondary" onclick="document.getElementById('ld-modal-backdrop').classList.remove('open')">Cancel</button>
+  </a>
+  <a href="/marketing/lists?interaction=demo" class="lc-tile {{ 'zero' if not tiles.demo }}">
+    <div class="stat-card">
+      <div class="stat-label">Demo Requested</div>
+      <div class="stat-value">{{ "{:,}".format(tiles.demo) }}</div>
+      <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Booked via Bookly</div>
     </div>
-    <div class="ld-status" id="ld-status"></div>
-  </div>
+  </a>
+  <a href="/marketing/lists?interaction=contact_form" class="lc-tile {{ 'zero' if not tiles.contact_form }}">
+    <div class="stat-card">
+      <div class="stat-label">Contact Form</div>
+      <div class="stat-value">{{ "{:,}".format(tiles.contact_form) }}</div>
+      <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Submitted citemetrix.com/contact</div>
+    </div>
+  </a>
+  <a href="/marketing/lists?interaction=opened" class="lc-tile {{ 'zero' if not tiles.opened }}">
+    <div class="stat-card">
+      <div class="stat-label">Opened</div>
+      <div class="stat-value">{{ "{:,}".format(tiles.opened) }}</div>
+      <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Human-filtered — excludes security-scanner opens</div>
+    </div>
+  </a>
 </div>
 
-<div class="ld-modal-backdrop" id="la-modal-backdrop">
-  <div class="ld-modal">
-    <h3>Add lead</h3>
-    <div class="fg"><label>Path</label>
-      <select id="la-path" style="width:100%; padding:9px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box;">
-        <option value="in_person">In-Person</option>
-        <option value="direct">Direct</option>
-      </select>
+<div class="grid grid-4" style="margin-bottom:16px;">
+  <a href="/marketing/lists?interaction=clicked" class="lc-tile {{ 'zero' if not tiles.clicked }}">
+    <div class="stat-card">
+      <div class="stat-label">Clicked</div>
+      <div class="stat-value">{{ "{:,}".format(tiles.clicked) }}</div>
+      <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Human-filtered, excludes unsubscribe links</div>
     </div>
-    <div class="fg"><label>Email</label><input type="text" id="la-email" placeholder="name@company.com"></div>
-    <div class="fg"><label>First name</label><input type="text" id="la-first-name"></div>
-    <div class="fg"><label>Last name</label><input type="text" id="la-last-name"></div>
-    <div class="fg"><label>Company</label><input type="text" id="la-company"></div>
-    <div class="fg"><label>Event / show (optional)</label><input type="text" id="la-event" placeholder="e.g. AI Summit CT, Sept 2026"></div>
-    <div style="font-size:12px;color:var(--gray-500);margin-bottom:16px;">Leads added under the same event name are grouped together, same as a CSV batch. Already-in-the-system emails aren't re-added, but this still records a real touch.</div>
-    <div style="display:flex; gap:10px;">
-      <button type="button" class="btn btn-primary" onclick="laAdd()">Add lead</button>
-      <button type="button" class="btn btn-secondary" onclick="document.getElementById('la-modal-backdrop').classList.remove('open')">Cancel</button>
+  </a>
+  <a href="/marketing/lists?interaction=replied" class="lc-tile {{ 'zero' if not tiles.replied }}">
+    <div class="stat-card">
+      <div class="stat-label">Replied</div>
+      <div class="stat-value">{{ "{:,}".format(tiles.replied) }}</div>
+      <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Not wired to a mailbox yet</div>
     </div>
-    <div class="ld-status" id="la-status"></div>
-  </div>
+  </a>
+  <a href="/marketing/lists?interaction=survey_submitted" class="lc-tile {{ 'zero' if not tiles.survey_submitted }}">
+    <div class="stat-card">
+      <div class="stat-label">Survey Submitted</div>
+      <div class="stat-value">{{ "{:,}".format(tiles.survey_submitted) }}</div>
+      <div style="font-size:11px; color:var(--gray-400); margin-top:2px;">Barrier-survey responses</div>
+    </div>
+  </a>
 </div>
-
-<div class="ld-modal-backdrop" id="le-modal-backdrop">
-  <div class="ld-modal">
-    <h3>Edit lead</h3>
-    <input type="hidden" id="le-id">
-    <div class="fg"><label>First name</label><input type="text" id="le-first-name"></div>
-    <div class="fg"><label>Last name</label><input type="text" id="le-last-name"></div>
-    <div class="fg"><label>Company</label><input type="text" id="le-company"></div>
-    <div class="fg"><label>Title</label><input type="text" id="le-title"></div>
-    <div class="fg"><label>Phone</label><input type="text" id="le-phone"></div>
-    <div class="fg"><label>LinkedIn URL</label><input type="text" id="le-linkedin" placeholder="https://linkedin.com/in/..."></div>
-    <div class="fg"><label>Source (override)</label><input type="text" id="le-source-override" placeholder="e.g. Referral from Jane"></div>
-    <div style="font-size:12px;color:var(--gray-500);margin-bottom:16px;">Overriding the source replaces whatever this lead's Source column would otherwise show — useful for older leads where the real source is known but was never captured.</div>
-    <div style="display:flex; gap:10px;">
-      <button type="button" class="btn btn-primary" onclick="leSave()">Save</button>
-      <button type="button" class="btn btn-secondary" onclick="document.getElementById('le-modal-backdrop').classList.remove('open')">Cancel</button>
-    </div>
-    <div class="ld-status" id="le-status"></div>
-  </div>
-</div>
-
-<script>
-async function ldUpload(){
-  const fileInput = document.getElementById('ld-file');
-  const file = fileInput.files && fileInput.files[0];
-  const batchName = document.getElementById('ld-batch-name').value.trim();
-  const status = document.getElementById('ld-status');
-  if (!file) return;
-  if (!batchName) { status.className='ld-status error'; status.textContent='Enter a batch name first.'; fileInput.value=''; return; }
-  status.className = 'ld-status'; status.textContent = '';
-  const fd = new FormData();
-  fd.append('file', file);
-  fd.append('batch_name', batchName);
-  fd.append('source', document.getElementById('ld-source').value.trim());
-  fd.append('path', document.getElementById('ld-path').value);
-  try {
-    const r = await fetch('/api/drip-leads/upload', {method:'POST', body: fd});
-    const j = await r.json();
-    fileInput.value = '';
-    if (!r.ok) { status.className='ld-status error'; status.textContent = j.error || 'Upload failed.'; return; }
-    status.className = 'ld-status success';
-    status.textContent = `Imported ${j.new_count} new leads (${j.dup_count} already existed, skipped) from ${j.total} rows.`;
-    setTimeout(() => location.reload(), 1500);
-  } catch(e) {
-    status.className='ld-status error'; status.textContent = 'Upload failed.'; fileInput.value='';
-  }
-}
-
-async function laAdd(){
-  const status = document.getElementById('la-status');
-  const email = document.getElementById('la-email').value.trim();
-  if (!email || email.indexOf('@') === -1) { status.className='ld-status error'; status.textContent='Enter a valid email.'; return; }
-  status.className = 'ld-status'; status.textContent = '';
-  const fd = new FormData();
-  fd.append('email', email);
-  fd.append('first_name', document.getElementById('la-first-name').value.trim());
-  fd.append('last_name', document.getElementById('la-last-name').value.trim());
-  fd.append('company', document.getElementById('la-company').value.trim());
-  fd.append('path', document.getElementById('la-path').value);
-  fd.append('event_name', document.getElementById('la-event').value.trim());
-  try {
-    const r = await fetch('/api/leads/add-single', {method:'POST', body: fd});
-    const j = await r.json();
-    if (!r.ok) { status.className='ld-status error'; status.textContent = j.error || 'Add failed.'; return; }
-    status.className = 'ld-status success';
-    status.textContent = j.is_new ? 'Added.' : 'That email already existed — recorded a new touch instead of a duplicate.';
-    setTimeout(() => location.reload(), 1200);
-  } catch(e) {
-    status.className='ld-status error'; status.textContent = 'Add failed.';
-  }
-}
-
-// 2026-09-04: the dropdown was invisible on open -- the table's own overflow-x:auto wrapper
-// clips any absolutely-positioned descendant that extends past its own content box, a classic
-// CSS gotcha (overflow clipping applies to ALL descendants, including ones positioned to
-// visually escape their parent). Fix: on open, actually move the dropdown out to <body> with
-// position:fixed computed from the button's real screen position, so it's no longer a
-// descendant of the clipping container at all -- not just visually repositioned, structurally
-// relocated. Moves back on close so the DOM stays tidy.
-let leOpenMenu = null;
-function leCloseMenu(){
-  if (!leOpenMenu) return;
-  leOpenMenu.classList.remove('open');
-  leOpenMenu.style.position = ''; leOpenMenu.style.top = ''; leOpenMenu.style.left = ''; leOpenMenu.style.right = '';
-  if (leOpenMenu._leHome) { leOpenMenu._leHome.appendChild(leOpenMenu); leOpenMenu._leHome = null; }
-  leOpenMenu = null;
-}
-function leToggleMenu(e, id){
-  e.stopPropagation();
-  const menu = document.getElementById('le-menu-' + id);
-  const btn = e.currentTarget;
-  const wasOpen = (leOpenMenu === menu);
-  leCloseMenu();
-  if (wasOpen) return;
-  menu._leHome = menu.parentNode;
-  document.body.appendChild(menu);
-  const r = btn.getBoundingClientRect();
-  menu.style.position = 'fixed';
-  menu.style.top = (r.bottom + 4) + 'px';
-  menu.style.right = (window.innerWidth - r.right) + 'px';
-  menu.classList.add('open');
-  leOpenMenu = menu;
-}
-document.addEventListener('click', leCloseMenu);
-
-function leEdit(id, firstName, lastName, company, title, phone, linkedin, sourceOverride){
-  document.getElementById('le-id').value = id;
-  document.getElementById('le-first-name').value = firstName;
-  document.getElementById('le-last-name').value = lastName;
-  document.getElementById('le-company').value = company;
-  document.getElementById('le-title').value = title;
-  document.getElementById('le-phone').value = phone;
-  document.getElementById('le-linkedin').value = linkedin;
-  document.getElementById('le-source-override').value = sourceOverride;
-  document.getElementById('le-status').className = 'ld-status'; document.getElementById('le-status').textContent = '';
-  document.getElementById('le-modal-backdrop').classList.add('open');
-}
-
-async function leSave(){
-  const status = document.getElementById('le-status');
-  const id = document.getElementById('le-id').value;
-  status.className = 'ld-status'; status.textContent = '';
-  const fd = new FormData();
-  fd.append('first_name', document.getElementById('le-first-name').value.trim());
-  fd.append('last_name', document.getElementById('le-last-name').value.trim());
-  fd.append('company', document.getElementById('le-company').value.trim());
-  fd.append('title', document.getElementById('le-title').value.trim());
-  fd.append('phone', document.getElementById('le-phone').value.trim());
-  fd.append('linkedin_url', document.getElementById('le-linkedin').value.trim());
-  fd.append('source_override', document.getElementById('le-source-override').value.trim());
-  try {
-    const r = await fetch('/api/leads/' + id + '/update', {method:'POST', body: fd});
-    const j = await r.json();
-    if (!r.ok) { status.className='ld-status error'; status.textContent = j.error || 'Save failed.'; return; }
-    status.className = 'ld-status success'; status.textContent = 'Saved.';
-    setTimeout(() => location.reload(), 800);
-  } catch(e) {
-    status.className='ld-status error'; status.textContent = 'Save failed.';
-  }
-}
-
-// Submits a batch to NeverBounce, then polls /api/leads/verify/status every 5s
-// until that batch's job completes (or fails) and reloads — same non-blocking
-// submit-then-poll pattern as Traffic's async refresh, so this never ties up
-// the request/UI while NeverBounce processes in the background.
-async function ldVerify(batchId){
-  const btn = document.getElementById('ld-verify-btn-' + batchId);
-  const cell = document.querySelector('#ld-batch-row-' + batchId + ' .ld-verify-cell');
-  btn.disabled = true; btn.textContent = 'Submitting…';
-  try {
-    const fd = new FormData(); fd.append('batch_id', batchId);
-    const r = await fetch('/api/leads/verify/submit', {method:'POST', body: fd});
-    const j = await r.json();
-    if (!r.ok) { cell.innerHTML = '<span style="color:var(--danger);">' + (j.error || 'Failed to start verification.') + '</span>'; btn.disabled = false; btn.textContent = 'Retry'; return; }
-    cell.innerHTML = '<span style="color:var(--gray-500);">Verifying ' + j.submitted + '…</span>';
-    btn.style.display = 'none';
-    ldPollVerify(batchId);
-  } catch(e) {
-    cell.innerHTML = '<span style="color:var(--danger);">Failed to start verification.</span>';
-    btn.disabled = false; btn.textContent = 'Retry';
-  }
-}
-function ldPollVerify(batchId, attempt){
-  attempt = attempt || 0;
-  if (attempt > 60) { return; } // ~5 min ceiling — NeverBounce bulk jobs on a few hundred rows finish well inside this
-  setTimeout(async () => {
-    try {
-      const r = await fetch('/api/leads/verify/status?batch_id=' + batchId);
-      const j = await r.json();
-      const stillPending = (j.jobs || []).some(job => job.status === 'submitted');
-      if (!stillPending) { location.reload(); return; }
-    } catch(e) {}
-    ldPollVerify(batchId, attempt + 1);
-  }, 5000);
-}
-</script>
 {% endblock %}

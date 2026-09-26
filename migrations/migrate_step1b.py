@@ -90,6 +90,18 @@ def product_db():
 LEGACY_TABLE = "wp_citemetrix_score_leads"
 TOUCH_FLAGS = ["results_email_sent", "nurture_1_sent", "nurture_2_sent", "nurture_3_sent"]
 
+# CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS4: wp_nurture_owned must reflect
+# WordPress's NURTURE sequence actually owning this lead -- not the fact that they
+# received their scan results, which is the product functioning, not a competing
+# sequence. results_email_sent fires within the same minute as every free check,
+# for every lead, unconditionally -- folding it into TOUCH_FLAGS here meant
+# wp_nurture_owned was landing on 1 for essentially every inbound lead, permanently,
+# confirmed against live data: 44 of 45 inbound leads had wp_nurture_owned=1 with
+# nurture_1/2/3_sent all still 0 -- they were never actually touched by a real WP
+# nurture send, only by the unrelated results email. This is the ONLY site that
+# computes wp_nurture_owned (grepped before editing, per the brief's SS4 instruction).
+NURTURE_OWNERSHIP_FLAGS = ["nurture_1_sent", "nurture_2_sent", "nurture_3_sent"]
+
 # step1brief.md SS13.2: matched against utm_source. Domain-fragment match (not
 # exact-equality) since a real value seen in this data is 'chatgpt.com', not a
 # bare platform name -- covers the assistants CiteMetrix's own product tracks
@@ -142,6 +154,13 @@ def main():
     with admin.cursor() as acur:
         migrated, touch_events_inserted, scan_events_inserted, suppressed_count, ai_referral_count = 0, 0, 0, 0, 0
         auto_enrolled_count, auto_enroll_skipped_count = 0, 0
+        # CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS3 Q5/SS5: enroll_batch()'s
+        # skip reason was being thrown away here (only enrolled-or-not survived), which is
+        # exactly how 42 silent pre-enrollment rejections left zero trace anywhere -- not
+        # even a bad one, just nothing. Kept broken out by reason (not summed into
+        # auto_enroll_skipped_count) so a real bug (skipped_nurture_owned climbing) reads
+        # differently from expected behavior (skipped_no_email on a LinkedIn-only lead).
+        skip_reasons = {'nurture_owned': 0, 'cluster_conflict': 0, 'no_email': 0, 'suppressed': 0}
 
         acur.execute("SELECT id FROM drip_campaigns WHERE name=%s", (GENERIC_NURTURE_CAMPAIGN_NAME,))
         campaign_row = acur.fetchone()
@@ -150,7 +169,12 @@ def main():
             print(f"NOTE: campaign '{GENERIC_NURTURE_CAMPAIGN_NAME}' not found -- new leads will not be auto-enrolled this run.")
 
         for r in score_leads:
+            # has_touch (stage classification: "has this person been contacted at all,
+            # by anything") correctly still includes results_email_sent -- receiving your
+            # scan results is a real touch. wp_owns_nurture (the interlock) must NOT --
+            # see NURTURE_OWNERSHIP_FLAGS above.
             has_touch = any(r[f] for f in TOUCH_FLAGS)
+            wp_owns_nurture = any(r[f] for f in NURTURE_OWNERSHIP_FLAGS)
             stage = "won" if r["converted"] else ("contacted" if has_touch else "new")
             # Real timestamp exists for 'won' (converted_at); no finer-grained data exists for
             # exactly when a touch happened, so 'contacted'/'new' fall back to created_at.
@@ -209,7 +233,7 @@ def main():
                      excluded=VALUES(excluded), wp_nurture_owned=VALUES(wp_nurture_owned),
                      ai_referral_platform=VALUES(ai_referral_platform)""",
                 (r["email"], r["created_at"], stage, stage_entered_at,
-                 suppressed_at, suppression_reason, int(r["excluded"]), int(has_touch),
+                 suppressed_at, suppression_reason, int(r["excluded"]), int(wp_owns_nurture),
                  ai_referral_platform, unsubscribe_token, r["id"], LEGACY_TABLE)
             )
             acur.execute(
@@ -266,6 +290,10 @@ def main():
                     auto_enrolled_count += 1
                 else:
                     auto_enroll_skipped_count += 1
+                    skip_reasons['nurture_owned'] += enroll_result.get('skipped_nurture_owned', 0)
+                    skip_reasons['cluster_conflict'] += enroll_result.get('skipped_cluster_conflict', 0)
+                    skip_reasons['no_email'] += enroll_result.get('skipped_no_email', 0)
+                    skip_reasons['suppressed'] += enroll_result.get('skipped_suppressed', 0)
 
             # touch_sent events -- one per WP flag set, idempotent per (lead, flag) via payload check.
             for flag in TOUCH_FLAGS:
@@ -290,12 +318,31 @@ def main():
         if not DRY_RUN:
             admin.commit()
 
+        if not DRY_RUN:
+            # CODE-BRIEF-WARM-NURTURE-NEVER-SENT-2026-09-11.md SS5: same reasoning as
+            # drip_cron.py's _log_run -- total_problem is what the dashboard's job-health
+            # check keys off. A real bug shows up as skip_reasons['nurture_owned'] or
+            # ['cluster_conflict'] climbing on genuinely new leads; no_email/suppressed
+            # are expected, routine skips (LinkedIn-only contacts, bounced addresses) and
+            # are logged for visibility but don't count toward the anomaly signal.
+            total_problem = skip_reasons['nurture_owned'] + skip_reasons['cluster_conflict']
+            acur.execute(
+                "INSERT INTO cron_run_log (job_name, total_processed, total_problem, detail_json) VALUES (%s,%s,%s,%s)",
+                ('lead_migration_sync', migrated, total_problem, json.dumps({
+                    'auto_enrolled': auto_enrolled_count,
+                    'auto_enroll_skipped': auto_enroll_skipped_count,
+                    'skip_reasons': skip_reasons,
+                }))
+            )
+            admin.commit()
+
     admin.close()
 
     print(f"Migrated: {migrated} leads. Suppression matches: {suppressed_count}. "
           f"New scan events: {scan_events_inserted}. New touch events: {touch_events_inserted}. "
           f"AI-platform referrals: {ai_referral_count}. "
-          f"Auto-enrolled into generic nurture: {auto_enrolled_count} (skipped/ineligible: {auto_enroll_skipped_count}).")
+          f"Auto-enrolled into generic nurture: {auto_enrolled_count} (skipped/ineligible: {auto_enroll_skipped_count}, "
+          f"by reason: {skip_reasons}).")
     print(f"Snapshot timestamp: {snapshot_at} (free-check signups arriving after this point are not yet in the pool -- expected, see step-1-brief.md SS5.3)")
 
 

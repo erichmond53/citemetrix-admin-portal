@@ -7,6 +7,36 @@
 {% include "marketing/_measure_tabs.html" %}
 {% import 'marketing/_charts.html' as charts %}
 {% import 'marketing/_banners.html' as banners %}
+
+{% if live_engagement %}
+<div class="card" style="margin-bottom:20px;">
+  <div class="card-title" style="margin-bottom:2px;">Live send engagement — last {{ live_engagement.days }} days</div>
+  <p style="color:var(--gray-500); font-size:12px; margin:0 0 12px 0;">
+    As of {{ live_engagement.generated_at.strftime('%Y-%m-%d %H:%M UTC') }} &middot; queried live on every page load, not a cached report &middot;
+    opens/clicks are human-classified (bot/scanner opens excluded), not raw SES counts.
+  </p>
+  <div class="grid grid-4">
+    <div class="stat-card">
+      <div class="stat-label">Sent</div>
+      <div class="stat-value">{{ live_engagement.sent }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Opened (human)</div>
+      <div class="stat-value">{{ live_engagement.opened_human }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Clicked (human)</div>
+      <div class="stat-value">{{ live_engagement.clicked_human }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Form completed</div>
+      <div class="stat-value">{{ live_engagement.form_completed }}</div>
+      <div style="margin-top:6px;font-size:11px;color:var(--gray-400);">free-check tool, among recipients above</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if not data %}
   <div class="card"><p style="color:var(--gray-600);">No data yet. Run <code>venv/bin/python jobs/campaign_effectiveness.py</code> or wait for the daily cron.</p></div>
 {% else %}
@@ -188,7 +218,7 @@
           <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ '{:,}'.format(c.engaged) }}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ c.form_focus }}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ c.scan_completed }}</td>
-          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if c.leads > 0 %}color:var(--success);font-weight:700;{% endif %}">{% if c.leads > 0 %}<a href="/marketing/leads?campaign={{ c.campaign|urlencode }}" style="color:inherit;text-decoration:underline;">{{ c.leads }}</a>{% else %}{{ c.leads }}{% endif %}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if c.leads > 0 %}color:var(--success);font-weight:700;{% endif %}">{% if c.leads > 0 %}<a href="/marketing/lists?campaign={{ c.campaign|urlencode }}" style="color:inherit;text-decoration:underline;">{{ c.leads }}</a>{% else %}{{ c.leads }}{% endif %}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ c.customers }}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;{% if c.revenue > 0 %}color:var(--success);font-weight:600;{% endif %}">${{ '%.0f'|format(c.revenue) }}</td>
         </tr>
@@ -217,7 +247,7 @@
       {% for s in data.by_source %}
         <tr>
           <td style="{% if s.source == '(none)' %}color:var(--gray-400);{% else %}color:var(--gray-800);font-weight:600;{% endif %}">{{ s.source }}</td>
-          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if s.leads > 0 and s.source != '(none)' %}color:var(--success);font-weight:600;{% endif %}">{% if s.leads > 0 %}<a href="/marketing/leads?source={{ s.source|urlencode }}" style="color:inherit;text-decoration:underline;">{{ s.leads }}</a>{% else %}{{ s.leads }}{% endif %}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if s.leads > 0 and s.source != '(none)' %}color:var(--success);font-weight:600;{% endif %}">{% if s.leads > 0 %}<a href="/marketing/lists?source={{ s.source|urlencode }}" style="color:inherit;text-decoration:underline;">{{ s.leads }}</a>{% else %}{{ s.leads }}{% endif %}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ s.converted }}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ s.customers }}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;{% if s.revenue > 0 %}color:var(--success);font-weight:600;{% endif %}">${{ '%.0f'|format(s.revenue) }}</td>
@@ -241,7 +271,7 @@
           <td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ lp.page }}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;">{{ '{:,}'.format(lp.sessions) }}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;color:var(--gray-500);">{{ '{:,}'.format(lp.engaged) }}</td>
-          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if lp.leads > 0 %}color:var(--success);font-weight:700;{% endif %}">{% if lp.leads > 0 %}<a href="/marketing/leads?landing_page={{ lp.page.split('?')[0]|urlencode }}" style="color:inherit;text-decoration:underline;">{{ lp.leads }}</a>{% else %}{{ lp.leads }}{% endif %}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;{% if lp.leads > 0 %}color:var(--success);font-weight:700;{% endif %}">{% if lp.leads > 0 %}<a href="/marketing/lists?landing_page={{ lp.page.split('?')[0]|urlencode }}" style="color:inherit;text-decoration:underline;">{{ lp.leads }}</a>{% else %}{{ lp.leads }}{% endif %}</td>
         </tr>
       {% endfor %}
       {% if not data.landing_pages %}<tr><td colspan="4" style="color:var(--gray-400);">No landing-page data.</td></tr>{% endif %}

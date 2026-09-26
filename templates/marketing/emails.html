@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Emails{% endblock %}
+{% block content %}
+<style>
+.em-new { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px; margin-bottom:24px; display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+.em-new .fg { flex:1; min-width:220px; }
+.em-new label { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+.em-new input { width:100%; padding:10px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; box-sizing:border-box; }
+.em-tabs { display:flex; gap:6px; margin-bottom:16px; flex-wrap:wrap; }
+.em-tab { background:#fff; border:1px solid var(--gray-200); border-radius:8px; padding:6px 14px; font-size:13px; font-weight:500; cursor:pointer; color:var(--gray-600); }
+.em-tab.active { background:var(--primary); color:#fff; border-color:var(--primary); }
+.em-search { width:100%; max-width:320px; padding:9px 12px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; margin-bottom:16px; box-sizing:border-box; }
+.em-card { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:16px 20px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.em-card-main { flex:1; min-width:0; }
+.em-card-main a { text-decoration:none; color:inherit; }
+.em-card h3 { margin:0 0 4px; font-size:15px; }
+.em-meta { font-size:13px; color:var(--gray-500); }
+.em-badge { font-size:11px; font-weight:600; text-transform:uppercase; padding:3px 10px; border-radius:6px; margin-left:8px; }
+.em-badge.draft { background:#F3F4F6; color:#6B7280; }
+.em-badge.scheduled { background:#FEF3C7; color:#92400E; }
+.em-badge.active { background:#D1FAE5; color:#065F46; }
+.em-badge.completed { background:#DBEAFE; color:#1E40AF; }
+.em-badge.archived { background:#F3F4F6; color:#9CA3AF; }
+.em-actions { display:flex; gap:8px; flex-shrink:0; }
+.btn-s { background:var(--gray-100); color:var(--gray-700); border:1px solid var(--gray-200); padding:7px 12px; border-radius:8px; font-weight:500; cursor:pointer; font-size:12px; }
+.btn-o { background:#fff; color:var(--primary); border:1px solid var(--primary); padding:7px 12px; border-radius:8px; font-weight:500; cursor:pointer; font-size:12px; }
+.em-modal-backdrop { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.45); z-index:200; align-items:center; justify-content:center; }
+.em-modal-backdrop.open { display:flex; }
+.em-modal { background:#fff; border-radius:12px; padding:24px; width:100%; max-width:620px; max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.25); }
+.em-modal h3 { margin:0 0 4px; font-size:17px; }
+.em-modal .em-modal-note { font-size:12px; color:var(--gray-500); margin-bottom:16px; }
+.em-preview-subject { font-size:13px; font-weight:600; color:var(--gray-500); margin-bottom:6px; }
+.em-preview-subject span { color:var(--gray-900, #111); font-weight:700; }
+.em-preview-body { white-space:pre-wrap; background:var(--gray-50, #f9fafb); border:1px solid var(--gray-200); border-radius:8px; padding:16px; font-size:14px; line-height:1.6; }
+</style>
+
+<div class="em-new">
+  <div class="fg"><label>New email name</label><input type="text" id="em-name" placeholder="e.g. Agency Principals — Step 4"></div>
+  <button class="btn-p" style="background:var(--primary);color:#fff;border:none;padding:10px 18px;border-radius:8px;font-weight:500;cursor:pointer;" onclick="emCreate()">Create email</button>
+</div>
+
+<div class="em-tabs" id="em-tabs">
+  <div class="em-tab active" data-status="">All {{ emails|length }}</div>
+  {% for st in ['draft','scheduled','active','completed','archived'] %}
+  <div class="em-tab" data-status="{{ st }}">{{ st|capitalize }} {{ emails|selectattr('status','equalto',st)|list|length }}</div>
+  {% endfor %}
+</div>
+<input type="text" class="em-search" id="em-search" placeholder="Search by name or subject…">
+
+<div id="em-list">
+{% for e in emails %}
+<div class="em-card" data-status="{{ e.status }}" data-search="{{ (e.name ~ ' ' ~ (e.subject or ''))|lower }}"
+     data-subject="{{ e.subject or '' }}" data-body="{{ e.body_text or '' }}"
+     data-cta-text="{{ e.cta_text or '' }}" data-cta-key="{{ e.cta_key or '' }}">
+  <div class="em-card-main">
+    <a href="/marketing/emails/{{ e.id }}">
+      <h3>{{ e.name }}<span class="em-badge {{ e.status }}">{{ e.status }}</span></h3>
+    </a>
+    <div class="em-meta">{{ e.subject or '(no subject yet)' }}</div>
+    <div class="em-meta">{{ e.used_in or 'Not used in any automation' }} · {{ e.sent_count }} sent{% if e.sent_count %}, {{ e.opened_count }} opened ({{ (e.opened_count / e.sent_count * 100) | round(1) }}%){% endif %} · updated {{ e.updated_at.strftime('%Y-%m-%d') }}</div>
+  </div>
+  <div class="em-actions">
+    <button class="btn-o" onclick="emPreview(this)">Preview</button>
+    <a href="/marketing/emails/{{ e.id }}"><button class="btn-s">Edit</button></a>
+    <button class="btn-s" onclick="emDuplicate({{ e.id }})">Duplicate</button>
+    {% if e.status == 'archived' %}
+    <button class="btn-s" onclick="emSetStatus({{ e.id }}, 'draft')">Restore</button>
+    {% else %}
+    <button class="btn-s" onclick="emArchive({{ e.id }}, {{ (e.used_in or '') != '' }})">Archive</button>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div class="card" style="text-align:center;color:var(--gray-500);padding:40px;">No emails yet. Create one above.</div>
+{% endfor %}
+</div>
+
+<div class="em-modal-backdrop" id="em-preview-modal-backdrop">
+  <div class="em-modal">
+    <h3>Preview</h3>
+    <div class="em-modal-note">Rendered with sample data (Jordan Rivera / Acme Marketing Co.) — not a real lead.</div>
+    <div class="em-preview-subject">Subject: <span id="em-preview-subject"></span></div>
+    <div class="em-preview-body" id="em-preview-body"></div>
+    <div style="text-align:right;margin-top:16px;">
+      <button class="btn-s" onclick="document.getElementById('em-preview-modal-backdrop').classList.remove('open')">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function emCreate(){
+  const name = document.getElementById('em-name').value.trim();
+  if (!name) return;
+  const r = await fetch('/api/emails', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+  const j = await r.json();
+  if (r.ok) { window.location = '/marketing/emails/' + j.email_id; }
+  else { alert(j.error || 'Failed to create email.'); }
+}
+async function emDuplicate(id){
+  const r = await fetch('/api/emails/'+id+'/duplicate', {method:'POST'});
+  const j = await r.json();
+  if (r.ok) { window.location = '/marketing/emails/' + j.email_id; }
+  else { alert(j.error || 'Duplicate failed.'); }
+}
+async function emSetStatus(id, status){
+  const r = await fetch('/api/emails/'+id+'/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status})});
+  if (r.ok) location.reload(); else alert('Failed to update status.');
+}
+function emArchive(id, usedElsewhere){
+  const msg = usedElsewhere
+    ? 'This email is referenced by a live automation. Archiving it will NOT stop it from being sent — status here is informational only. Archive anyway?'
+    : 'Archive this email?';
+  if (!confirm(msg)) return;
+  emSetStatus(id, 'archived');
+}
+async function emPreview(btn){
+  const card = btn.closest('.em-card');
+  const f = {
+    subject: card.getAttribute('data-subject'), body: card.getAttribute('data-body'),
+    cta_text: card.getAttribute('data-cta-text'), cta_key: card.getAttribute('data-cta-key'),
+  };
+  const r = await fetch('/api/emails/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(f)});
+  const j = await r.json();
+  if (!r.ok) { alert(j.error || 'Preview failed.'); return; }
+  document.getElementById('em-preview-subject').textContent = j.subject || '(no subject)';
+  document.getElementById('em-preview-body').textContent = j.body || '(no copy yet)';
+  document.getElementById('em-preview-modal-backdrop').classList.add('open');
+}
+document.getElementById('em-tabs').addEventListener('click', (ev) => {
+  const tab = ev.target.closest('.em-tab');
+  if (!tab) return;
+  document.querySelectorAll('.em-tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  applyFilters();
+});
+document.getElementById('em-search').addEventListener('input', applyFilters);
+function applyFilters(){
+  const status = document.querySelector('.em-tab.active').getAttribute('data-status');
+  const q = document.getElementById('em-search').value.trim().toLowerCase();
+  document.querySelectorAll('.em-card').forEach(card => {
+    const matchesStatus = !status || card.getAttribute('data-status') === status;
+    const matchesSearch = !q || card.getAttribute('data-search').includes(q);
+    card.style.display = (matchesStatus && matchesSearch) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}

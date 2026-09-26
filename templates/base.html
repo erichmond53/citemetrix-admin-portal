@@ -133,11 +133,14 @@
                 <a href="/marketing/leads" class="nav-link {% if ep in ['marketing_leads', 'marketing_leads_toggle', 'marketing_drip_leads'] %}active{% endif %}"><span class="nav-section-icon">&#128100;</span><span>Leads</span></a>
             </div>
 
-            {% set nav_sequences = ep in ['marketing_drip_campaigns', 'marketing_drip_campaign_detail'] %}
+            {% set nav_sequences = ep in ['marketing_emails', 'marketing_email_detail', 'marketing_automations', 'marketing_automation_detail', 'marketing_lists', 'marketing_segments'] %}
             <div class="nav-section {% if nav_sequences %}open{% endif %}">
                 <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#9993;</span><span>Sequences</span><span class="nav-chevron">&#9662;</span></a>
                 <div class="nav-section-items">
-                    <a href="/marketing/drip-campaigns" class="nav-link {% if ep in ['marketing_drip_campaigns', 'marketing_drip_campaign_detail'] %}active{% endif %}">Drip Campaigns</a>
+                    <a href="/marketing/emails" class="nav-link {% if ep in ['marketing_emails', 'marketing_email_detail'] %}active{% endif %}">Emails</a>
+                    <a href="/marketing/automations" class="nav-link {% if ep in ['marketing_automations', 'marketing_automation_detail'] %}active{% endif %}">Automations</a>
+                    <a href="/marketing/lists" class="nav-link {% if ep == 'marketing_lists' %}active{% endif %}">Lists</a>
+                    <a href="/marketing/segments" class="nav-link {% if ep == 'marketing_segments' %}active{% endif %}">Segments</a>
                 </div>
             </div>
 
@@ -194,13 +197,12 @@
 
             {# Operations #}
             {% if role in ['admin', 'operations'] %}
-            {% set op = ep in ['operations', 'audit_log', 'operations_api_status', 'operations_aws_pipeline'] %}
+            {% set op = ep in ['operations', 'audit_log', 'operations_api_status'] %}
             <div class="nav-section {% if op %}open{% endif %}">
                 <a class="nav-section-header" data-toggle="section"><span class="nav-section-icon">&#9881;&#65039;</span><span>Operations</span><span class="nav-chevron">&#9662;</span></a>
                 <div class="nav-section-items">
                     <a href="/operations" class="nav-link {% if ep == 'operations' %}active{% endif %}">Product Jobs</a>
                     <a href="/operations/api-status" class="nav-link {% if ep == 'operations_api_status' %}active{% endif %}">AI Platform APIs</a>
-                    <a href="/operations/aws-pipeline" class="nav-link {% if ep == 'operations_aws_pipeline' %}active{% endif %}">AWS Pipeline Health</a>
                     {% if role == 'admin' %}<a href="/audit" class="nav-link {% if ep == 'audit_log' %}active{% endif %}">Customer Activity Log</a>{% endif %}
                 </div>
             </div>
@@ -271,7 +273,6 @@
     </aside>
     <script>
         let ldpCurrentId = null;
-        let ldpCampaignsCache = null;
 
         function ldpEsc(s) {
             const d = document.createElement('div');
@@ -433,26 +434,8 @@
             document.getElementById('ldp-actions').innerHTML =
                 '<select id="ldp-stage-select" onchange="ldpSetStage(this.value)">' + stageOptions + '</select>' +
                 '<button type="button" class="btn btn-secondary" onclick="ldpToggleExclude()">' + (l.excluded ? 'Restore' : 'Exclude') + '</button>' +
-                '<select id="ldp-enroll-select"><option value="">Enroll in…</option></select>' +
-                '<button type="button" class="btn btn-secondary" onclick="ldpEnroll()">Enroll</button>' +
                 '<form class="ldp-note-form" onsubmit="ldpAddNote(event)"><input type="text" id="ldp-note-input" placeholder="Add a note…"><button type="submit" class="btn btn-primary">Add</button></form>' +
                 '<div id="ldp-action-status" class="ldp-status"></div>';
-            ldpLoadCampaigns();
-        }
-
-        async function ldpLoadCampaigns() {
-            if (!ldpCampaignsCache) {
-                try {
-                    const r = await fetch('/api/drip/campaigns/list');
-                    const j = await r.json();
-                    ldpCampaignsCache = j.campaigns || [];
-                } catch (e) { ldpCampaignsCache = []; }
-            }
-            const sel = document.getElementById('ldp-enroll-select');
-            if (!sel) return;
-            sel.innerHTML = '<option value="">Enroll in…</option>' + ldpCampaignsCache.map(c =>
-                `<option value="${c.id}">${ldpEsc(c.name)}${c.active ? '' : ' (paused)'}</option>`
-            ).join('');
         }
 
         function ldpToggleResponse(id) {
@@ -500,19 +483,6 @@
                 ldpStatus('Note added.', false);
                 ldpRefresh();
             } catch (e) { ldpStatus('Could not add note.', true); }
-        }
-        async function ldpEnroll() {
-            const sel = document.getElementById('ldp-enroll-select');
-            const campaignId = sel.value;
-            if (!campaignId) { ldpStatus('Choose a sequence first.', true); return; }
-            const fd = new FormData(); fd.append('campaign_id', campaignId);
-            try {
-                const r = await fetch('/api/leads/' + ldpCurrentId + '/enroll', { method: 'POST', body: fd });
-                const j = await r.json();
-                if (!r.ok) { ldpStatus(j.error || 'Could not enroll.', true); return; }
-                ldpStatus('Enrolled.', false);
-                ldpRefresh();
-            } catch (e) { ldpStatus('Could not enroll.', true); }
         }
     </script>
 

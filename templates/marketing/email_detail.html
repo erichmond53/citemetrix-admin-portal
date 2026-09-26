@@ -1,0 +1,313 @@
+{% extends "base.html" %}
+{% block title %}{{ email.name }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/static/vendor/grapesjs/grapes.min.css">
+<style>
+.ed-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
+.ed-used-in { background:#EFF6FF; border:1px solid #93C5FD; border-radius:8px; padding:12px 16px; margin-bottom:20px; font-size:13px; color:#1E3A8A; }
+.ed-card { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px 20px; margin-bottom:14px; }
+.ed-field { margin-bottom:10px; }
+.ed-field label { display:block; font-size:12px; font-weight:500; color:var(--gray-600); margin-bottom:4px; }
+.ed-field input[type=text], .ed-field select, .ed-field textarea { width:100%; box-sizing:border-box; padding:9px 11px; border:1px solid var(--gray-200); border-radius:8px; font-size:14px; font-family:inherit; }
+.ed-field textarea { min-height:160px; }
+.ed-row { display:flex; gap:14px; }
+.ed-row .ed-field { flex:1; }
+.ed-cta-box { background:var(--gray-50, #f9fafb); border:1px solid var(--gray-200); border-radius:8px; padding:12px 14px; margin-bottom:10px; }
+.ed-cta-box .ed-cta-title { font-size:12px; font-weight:700; text-transform:uppercase; color:var(--gray-500); margin-bottom:8px; }
+.ed-cta-url-preview { font-size:12px; color:var(--gray-500); margin-top:4px; word-break:break-all; }
+.ed-cta-url-preview code { background:var(--gray-100); padding:2px 5px; border-radius:4px; }
+.ed-onpage-box { background:#fff; border:1px dashed var(--gray-200); border-radius:8px; padding:12px 14px; margin-top:10px; }
+.ed-sync-status { font-size:12px; margin-top:8px; }
+.ed-sync-status.synced { color:#166534; }
+.ed-sync-status.failed { color:#991B1B; }
+.ed-action-status { font-size:12px; margin-top:8px; }
+.ed-action-status.ok { color:#166534; }
+.ed-action-status.err { color:#991B1B; }
+.ed-stats { font-size:13px; color:var(--gray-500); margin-top:4px; }
+.btn-s { background:var(--gray-100); color:var(--gray-700); border:1px solid var(--gray-200); padding:8px 14px; border-radius:8px; font-weight:500; cursor:pointer; font-size:13px; }
+.btn-p2 { background:var(--primary); color:#fff; border:none; padding:8px 14px; border-radius:8px; font-weight:500; cursor:pointer; font-size:13px; }
+.btn-o { background:#fff; color:var(--primary); border:1px solid var(--primary); padding:8px 14px; border-radius:8px; font-weight:500; cursor:pointer; font-size:13px; }
+.ed-test-row { display:flex; gap:8px; align-items:center; margin-top:12px; padding-top:12px; border-top:1px solid var(--gray-100); }
+.ed-test-row input { flex:1; }
+.ed-modal-backdrop { display:none; position:fixed; inset:0; background:rgba(10,22,40,0.45); z-index:200; align-items:center; justify-content:center; }
+.ed-modal-backdrop.open { display:flex; }
+.ed-modal { background:#fff; border-radius:12px; padding:24px; width:100%; max-width:620px; max-height:85vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.25); }
+.ed-preview-body { white-space:pre-wrap; background:var(--gray-50, #f9fafb); border:1px solid var(--gray-200); border-radius:8px; padding:16px; font-size:14px; line-height:1.6; }
+/* GrapesJS canvas -- thin skin to match this app's palette, mirrors how Sendy's own
+   grapesjs-sendy.css is described in the spec: "a thin Sendy skin, nothing more." */
+#ed-gjs-wrap { border:1px solid var(--gray-200); border-radius:8px; overflow:hidden; margin-bottom:6px; }
+.gjs-one-bg { background-color: #fff !important; }
+.gjs-two-color { color: var(--gray-700, #374151) !important; }
+.gjs-three-bg { background-color: var(--gray-100, #f3f4f6) !important; color: var(--gray-700, #374151) !important; }
+.gjs-four-color, .gjs-four-color-h:hover { color: var(--primary) !important; }
+.ed-plaintext-stale { background:#FEF3C7; border:1px solid #FBBF24; border-radius:8px; padding:10px 14px; margin:10px 0; font-size:12px; color:#92400E; display:none; align-items:center; justify-content:space-between; gap:10px; }
+.ed-plaintext-stale.show { display:flex; }
+</style>
+
+<div class="ed-header">
+  <div>
+    <h1 style="margin:0 0 4px;"><a href="/marketing/emails" style="color:var(--gray-400);text-decoration:none;font-size:14px;">← Emails</a></h1>
+    <div class="ed-stats">{{ stats.sent_count }} sent{% if stats.sent_count %}, {{ stats.opened_count }} opened ({{ (stats.opened_count / stats.sent_count * 100) | round(1) }}%){% endif %}</div>
+  </div>
+</div>
+
+{% if used_in %}
+<div class="ed-used-in">
+  <strong>Used in:</strong> {% for u in used_in %}{{ u.automation_name }}{% if not loop.last %}, {% endif %}{% endfor %} —
+  editing here changes what those automations send next. Reassigning which automation uses this email happens in the automation canvas (not built yet).
+</div>
+{% else %}
+<div class="ed-used-in" style="background:var(--gray-50, #f9fafb);border-color:var(--gray-200);color:var(--gray-500);">
+  Not used in any automation yet.
+</div>
+{% endif %}
+
+<div class="ed-card">
+  <div class="ed-row">
+    <div class="ed-field"><label>Name (internal label, not shown to recipients)</label><input type="text" id="ed-name" value="{{ email.name }}"></div>
+    <div class="ed-field" style="flex:0 0 160px;"><label>Status</label>
+      <select id="ed-status">
+        {% for st in ['draft','scheduled','active','completed','archived'] %}
+        <option value="{{ st }}" {{ 'selected' if email.status == st }}>{{ st|capitalize }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="ed-field"><label>Subject</label><input type="text" id="ed-subject" value="{{ email.subject or '' }}"></div>
+
+  <div class="ed-field">
+    <label>Body — {{ '{{first_name}}' }}, {{ '{{last_name}}' }}, {{ '{{company}}' }}, {{ '{{cta_button}}' }} / {{ '{{cta_url}}' }} available as merge tags, typed as plain text inside any block</label>
+    <div id="ed-gjs-wrap"><div id="ed-gjs"></div></div>
+  </div>
+  <div class="ed-field">
+    <label>Plain-text version — what non-HTML email clients see. Auto-kept in sync with the body above unless you edit it directly.</label>
+    <textarea id="ed-body-text" style="min-height:100px;">{{ email.body_text or '' }}</textarea>
+    <div class="ed-plaintext-stale" id="ed-plaintext-stale">
+      <span>You edited the plain-text version by hand — it may be out of sync with the body above now that it's changed.</span>
+      <button class="btn-s" type="button" onclick="edRegeneratePlainText()">Regenerate from body</button>
+    </div>
+  </div>
+
+  <div class="ed-row">
+    <div class="ed-field" style="flex:0 0 200px;"><label><input type="checkbox" id="ed-is-survey" {{ 'checked' if email.is_survey_step }}> This is the survey invite</label></div>
+    <div class="ed-field" style="flex:0 0 100px;"><label>Survey epoch</label><input type="text" id="ed-survey-epoch" value="{{ email.survey_epoch or '' }}" placeholder="e.g. 1"></div>
+  </div>
+  <div class="ed-cta-box">
+    <div class="ed-cta-title">Call to action</div>
+    <div class="ed-row">
+      <div class="ed-field"><label>CTA text</label><input type="text" id="ed-cta-text" value="{{ email.cta_text or '' }}" placeholder="e.g. Check my visibility"></div>
+      <div class="ed-field"><label>Landing page key (matches /check/ messaging, or "book-demo")</label><input type="text" id="ed-cta-key" value="{{ email.cta_key or '' }}" placeholder="e.g. drip-agency-principals"></div>
+    </div>
+    <div style="font-size:12px;color:var(--gray-500);">Use {{ '{{cta_button}}' }} or {{ '{{cta_url}}' }} in the copy above to place it.</div>
+    <div class="ed-cta-url-preview">Builds: <code id="ed-cta-url-live">(enter both fields above)</code></div>
+    <div class="ed-onpage-box">
+      <div class="ed-cta-title">On-page messaging (what /check/ shows when this is clicked)</div>
+      <div class="ed-field"><label>On-page title</label><input type="text" id="ed-onpage-title" value="{{ email.onpage_title or '' }}" placeholder="e.g. See what AI says about your agency"></div>
+      <div class="ed-field" style="margin-bottom:0;"><label>On-page marketing text</label><textarea id="ed-onpage-copy" style="min-height:70px;" placeholder="The paragraph under the headline on /check/">{{ email.onpage_copy or '' }}</textarea></div>
+      <div style="font-size:12px;color:var(--gray-500);margin-top:6px;">Fill in all four CTA fields and Save to push this live to /check/.</div>
+      <div class="ed-sync-status {{ email.onpage_sync_status or '' }}">{% if email.onpage_sync_status == 'synced' %}✓ Live on /check/{% elif email.onpage_sync_status == 'failed' %}✗ Not synced: {{ email.onpage_sync_error }}{% endif %}</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button class="btn-p2" onclick="edSave()">Save</button>
+    <button class="btn-o" onclick="edPreview()">Preview</button>
+  </div>
+  <div class="ed-action-status" id="ed-action-status"></div>
+  <div class="ed-test-row">
+    <input type="email" id="ed-test-email" placeholder="you@example.com">
+    <button class="btn-s" onclick="edSendTest()">Send test email</button>
+  </div>
+  <div class="ed-action-status" id="ed-test-status"></div>
+</div>
+
+<div class="ed-modal-backdrop" id="ed-preview-modal-backdrop">
+  <div class="ed-modal">
+    <h3>Preview</h3>
+    <div style="font-size:12px;color:var(--gray-500);margin-bottom:16px;">Rendered with sample data (Jordan Rivera / Acme Marketing Co.) — not a real lead.</div>
+    <div style="font-size:13px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">Subject: <span id="ed-preview-subject" style="color:var(--gray-900,#111);font-weight:700;"></span></div>
+    <div class="ed-preview-body" id="ed-preview-body"></div>
+    <div id="ed-preview-html-wrap" style="display:none;margin-top:14px;">
+      <div style="font-size:12px;font-weight:600;color:var(--gray-500);margin-bottom:6px;">How the CTA renders as a real button (HTML email clients):</div>
+      <iframe id="ed-preview-html-frame" style="width:100%;min-height:220px;border:1px solid var(--gray-200);border-radius:8px;background:#fff;"></iframe>
+    </div>
+    <div style="text-align:right;margin-top:16px;">
+      <button class="btn-s" onclick="document.getElementById('ed-preview-modal-backdrop').classList.remove('open')">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/vendor/grapesjs/grapes.min.js"></script>
+<script src="/static/vendor/grapesjs/grapesjs-preset-newsletter.js"></script>
+<script>
+const EMAIL_ID = {{ email.id }};
+const SAVED_DESIGN_JSON = {{ (email.design_json or '') | tojson }};
+const SAVED_BODY_HTML = {{ (email.body_html or '') | tojson }};
+const SAVED_BODY_TEXT = {{ (email.body_text or '') | tojson }};
+
+function edStripHtmlToText(html){
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html.replace(/<(br|\/p|\/div|\/tr|\/h[1-6])\s*\/?>/gi, '\n');
+  const text = (tmp.textContent || tmp.innerText || '');
+  return text.replace(/[ \t]+/g, ' ').replace(/\n\s*\n\s*\n+/g, '\n\n').trim();
+}
+
+// 2026-09-23: brand furniture starter template (outbound-email-work-order-2026-09-21.md
+// SS8.3's ruling -- logo, thin header rule, brand colour, editable/deletable by the
+// author; the OTHER half of SS8.3, the compliance footer, is server-injected at send
+// time -- leads_drip.py's build_unsubscribe_footer_html(), never part of this template).
+// Colors are the CURRENT shipped brand colors (--cm-teal #00D4AA / --cm-navy #0A1628,
+// matching _cta_button_html() and templates/page-citemetrix.php) -- the work order's own
+// #10E07C reference predates the 2026-09-04 correction and is stale. Logo is the
+// navy/teal lockup (Navy-Logo.jpg, citemetrix.com's own WP media library) -- caught and
+// corrected live: an earlier pass grabbed Email-Sig-Logo.png from the same media
+// library by filename alone without viewing it first, which turned out to be Eric's
+// personal Expert SEO Consulting email-signature logo, not a CiteMetrix asset. ESC and
+// CiteMetrix branding must never cross (CLAUDE.md) -- always view an asset before
+// wiring it into a CiteMetrix send path, never infer from a filename alone.
+// Carries the SAME proven Outlook-safe wrapper shape as every other email now does (see
+// citemetrix-outlook-email-centering-fix-2026-09-23.md) -- td align="center" only, no
+// table-level align, real width="600" attribute -- so a brand-new email doesn't silently
+// reintroduce the centering bug that took 8 rounds to actually fix.
+const DEFAULT_TEMPLATE = `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation">
+<tr><td align="center">
+<table width="600" border="0" cellpadding="0" cellspacing="0" role="presentation" style="max-width:600px;width:100%;font-family:Arial,Helvetica,sans-serif;">
+  <tr><td style="padding:24px 0 0;">
+    <img src="https://citemetrix.com/wp-content/uploads/2026/01/Navy-Logo.jpg" width="180" height="57" alt="CiteMetrix" style="display:block;border:0;">
+  </td></tr>
+  <tr><td style="padding:12px 0 20px;">
+    <div style="height:3px;line-height:3px;font-size:0;background-color:#00D4AA;">&nbsp;</div>
+  </td></tr>
+  <tr><td style="padding:0;"><div data-gjs-type="text" style="font-size:15px;line-height:1.6;color:#1f2937;">Hi {{first_name}},<br><br>Write your message here.<br><br>{{cta_button}}<br><br>Eric</div></td></tr>
+</table>
+</td></tr></table>`;
+
+// A bootstrap from real plain-text content -- so an existing email opened in this canvas
+// for the first time (design_json and body_html both empty, but real body_text exists from
+// the schema-split backfill) starts from ITS real copy, not a generic blank template.
+function edBootstrapHtml(){
+  if (SAVED_BODY_HTML) return SAVED_BODY_HTML;
+  if (SAVED_BODY_TEXT) {
+    const escaped = SAVED_BODY_TEXT.split('\n\n').map(block =>
+      `<p style="font-size:15px;line-height:1.6;color:#1f2937;">${block.split('\n').map(l => l.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')).join('<br>')}</p>`
+    ).join('');
+    return `<table role="presentation" width="100%" style="max-width:600px;margin:0 auto;font-family:Arial,Helvetica,sans-serif;"><tr><td style="padding:20px 0;">${escaped}</td></tr></table>`;
+  }
+  return DEFAULT_TEMPLATE;
+}
+
+const editor = grapesjs.init({
+  container: '#ed-gjs',
+  height: '480px',
+  fromElement: false,
+  storageManager: false,
+  plugins: ['grapesjs-preset-newsletter'],
+  pluginsOpts: { 'grapesjs-preset-newsletter': {} },
+  assetManager: {
+    upload: '/api/emails/assets/upload',
+    uploadName: 'files',
+    autoAdd: true,
+  },
+});
+
+if (SAVED_DESIGN_JSON) {
+  try { editor.loadProjectData(JSON.parse(SAVED_DESIGN_JSON)); }
+  catch (e) { editor.setComponents(edBootstrapHtml()); }
+} else {
+  editor.setComponents(edBootstrapHtml());
+}
+
+let bodyManual = {{ 'true' if email.body_text_manual else 'false' }};
+let lastKnownHtml = editor.getHtml();
+
+document.getElementById('ed-body-text').addEventListener('input', () => {
+  bodyManual = true;
+  checkPlainTextStale();
+});
+function checkPlainTextStale(){
+  const stale = bodyManual && editor.getHtml() !== lastKnownHtml;
+  document.getElementById('ed-plaintext-stale').classList.toggle('show', stale);
+}
+editor.on('component:update component:add component:remove', () => checkPlainTextStale());
+
+function edRegeneratePlainText(){
+  document.getElementById('ed-body-text').value = edStripHtmlToText(editor.getHtml());
+  bodyManual = false;
+  lastKnownHtml = editor.getHtml();
+  document.getElementById('ed-plaintext-stale').classList.remove('show');
+}
+
+function edFields(){
+  if (!bodyManual) {
+    // Auto-keep the plain-text box current, visibly, right before every save/preview/test --
+    // "auto-generate the plain-text part from the HTML on save" (spec SS1.2), done client-side
+    // so what's shown matches what's sent, not just what the server independently derives.
+    document.getElementById('ed-body-text').value = edStripHtmlToText(editor.getHtml());
+  }
+  return {
+    name: document.getElementById('ed-name').value,
+    status: document.getElementById('ed-status').value,
+    subject: document.getElementById('ed-subject').value,
+    body: document.getElementById('ed-body-text').value,
+    body_manual: bodyManual,
+    body_html: editor.getHtml() + '<style>' + editor.getCss() + '</style>',
+    design_json: JSON.stringify(editor.getProjectData()),
+    is_survey_step: document.getElementById('ed-is-survey').checked,
+    survey_epoch: document.getElementById('ed-survey-epoch').value,
+    cta_text: document.getElementById('ed-cta-text').value,
+    cta_key: document.getElementById('ed-cta-key').value,
+    onpage_title: document.getElementById('ed-onpage-title').value,
+    onpage_copy: document.getElementById('ed-onpage-copy').value,
+  };
+}
+function edUpdateCtaPreview(){
+  const text = document.getElementById('ed-cta-text').value.trim();
+  const key = document.getElementById('ed-cta-key').value.trim();
+  const out = document.getElementById('ed-cta-url-live');
+  if (!text || !key) { out.textContent = '(enter both fields above)'; return; }
+  if (key.toLowerCase() === 'book-demo') { out.textContent = 'https://citemetrix.com/book-demo/?utm_source=email&utm_medium=drip&utm_campaign=warm&utm_content=step0'; return; }
+  out.textContent = `https://citemetrix.com/check/?utm_source=email&utm_medium=drip&utm_campaign=${encodeURIComponent(key)}&utm_content=step0`;
+}
+['ed-cta-text','ed-cta-key'].forEach(id => document.getElementById(id).addEventListener('input', edUpdateCtaPreview));
+edUpdateCtaPreview();
+
+async function edSave(){
+  const statusEl = document.getElementById('ed-action-status');
+  const fields = edFields();
+  const r = await fetch('/api/emails/'+EMAIL_ID, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(fields)});
+  const j = await r.json();
+  if (!r.ok) { statusEl.className = 'ed-action-status err'; statusEl.textContent = j.error || 'Save failed.'; return; }
+  statusEl.className = 'ed-action-status ok'; statusEl.textContent = 'Saved ✓';
+  setTimeout(() => statusEl.textContent = '', 1500);
+  lastKnownHtml = editor.getHtml();
+  checkPlainTextStale();
+  const syncEl = document.querySelector('.ed-sync-status');
+  syncEl.className = 'ed-sync-status ' + (j.onpage_sync_status || '');
+  if (j.onpage_sync_status === 'synced') { syncEl.textContent = '✓ Live on /check/'; }
+  else if (j.onpage_sync_status === 'failed') { syncEl.textContent = '✗ Not synced: ' + j.onpage_sync_error; }
+  else { syncEl.textContent = ''; }
+}
+async function edPreview(){
+  const r = await fetch('/api/emails/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(edFields())});
+  const j = await r.json();
+  if (!r.ok) { alert(j.error || 'Preview failed.'); return; }
+  document.getElementById('ed-preview-subject').textContent = j.subject || '(no subject)';
+  document.getElementById('ed-preview-body').textContent = j.body || '(no copy yet)';
+  const htmlWrap = document.getElementById('ed-preview-html-wrap');
+  if (j.body_html) { htmlWrap.style.display = 'block'; document.getElementById('ed-preview-html-frame').srcdoc = j.body_html; }
+  else { htmlWrap.style.display = 'none'; }
+  document.getElementById('ed-preview-modal-backdrop').classList.add('open');
+}
+async function edSendTest(){
+  const statusEl = document.getElementById('ed-test-status');
+  const toEmail = document.getElementById('ed-test-email').value.trim();
+  if (!toEmail) { statusEl.className = 'ed-action-status err'; statusEl.textContent = 'Enter an email address first.'; return; }
+  const f = edFields();
+  f.to_email = toEmail;
+  statusEl.className = 'ed-action-status'; statusEl.textContent = 'Sending…';
+  const r = await fetch('/api/emails/test-send', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(f)});
+  const j = await r.json();
+  if (!r.ok) { statusEl.className = 'ed-action-status err'; statusEl.textContent = j.error || 'Send failed.'; return; }
+  statusEl.className = 'ed-action-status ok'; statusEl.textContent = `Test sent to ${toEmail}.`;
+}
+</script>
+{% endblock %}
