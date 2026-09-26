@@ -123,7 +123,7 @@
 </div>
 {% endif %}
 
-<div class="card">
+<div class="card" id="lead-records-card" data-ldp-refresh-target>
   <div class="card-header"><div class="card-title">Lead records ({{ total_filtered }}{% if total_pages > 1 %}, showing {{ ((page-1)*50)+1 }}&ndash;{{ ((page-1)*50)+leads|length }}{% endif %})</div></div>
   <div style="overflow-x:auto;">
     <table class="table">
@@ -147,7 +147,8 @@
           </td>
           <td style="text-transform:capitalize;color:var(--gray-600);">{{ l.stage }}</td>
           <td style="white-space:nowrap;">
-            {% if l.segment == 'agency' %}<span class="badge badge-info">Agency</span>
+            {% if l.persona_label %}<span class="badge badge-info">{{ l.persona_label }}</span>
+            {% elif l.segment == 'agency' %}<span class="badge badge-info">Agency</span>
             {% elif l.segment == 'comparison' %}<span class="badge" style="background:#ede9fe;color:#6d28d9;">Comparison{% if l.competitor %} &middot; {{ l.competitor }}{% endif %}</span>
             {% elif l.segment == 'generic' %}<span class="badge" style="background:var(--gray-100);color:var(--gray-500);">Generic</span>
             {% else %}<span style="color:var(--gray-300);">—</span>{% endif %}

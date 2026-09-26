@@ -456,6 +456,18 @@
             if (el) el.classList.toggle('open');
         }
 
+        async function ldpRefreshUnderlyingTable() {
+            const target = document.querySelector('[data-ldp-refresh-target]');
+            if (!target || !target.id) return;
+            try {
+                const r = await fetch(window.location.href);
+                if (!r.ok) return;
+                const html = await r.text();
+                const fresh = new DOMParser().parseFromString(html, 'text/html').getElementById(target.id);
+                if (fresh) target.innerHTML = fresh.innerHTML;
+            } catch (e) { /* best-effort -- the panel's own status message is still accurate */ }
+        }
+
         function ldpStatus(msg, isError) {
             const el = document.getElementById('ldp-action-status');
             if (!el) return;
@@ -471,6 +483,7 @@
                 if (!r.ok) { ldpStatus(j.error || 'Could not update stage.', true); return; }
                 ldpStatus('Stage updated.', false);
                 ldpRefresh();
+                ldpRefreshUnderlyingTable();
             } catch (e) { ldpStatus('Could not update stage.', true); }
         }
         async function ldpSetCategory(persona) {
@@ -481,6 +494,7 @@
                 if (!r.ok) { ldpStatus(j.error || 'Could not update category.', true); return; }
                 ldpStatus('Category updated.', false);
                 ldpRefresh();
+                ldpRefreshUnderlyingTable();
             } catch (e) { ldpStatus('Could not update category.', true); }
         }
         async function ldpToggleExclude() {
@@ -490,6 +504,7 @@
                 if (!r.ok) { ldpStatus(j.error || 'Could not update.', true); return; }
                 ldpStatus(j.excluded ? 'Excluded.' : 'Restored.', false);
                 ldpRefresh();
+                ldpRefreshUnderlyingTable();
             } catch (e) { ldpStatus('Could not update.', true); }
         }
         async function ldpAddNote(e) {

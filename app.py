@@ -7658,6 +7658,22 @@ def marketing_lists():
                 for r in cur.fetchall():
                     enroll_by_lead.setdefault(r['lead_id'], r)
 
+            # 2026-09-26: manual persona categorization (see api_leads_set_category) -- same
+            # marblism-* tags, batch-looked-up here rather than per-row so the Lists table can
+            # show it in the SEGMENT column without an N+1 query.
+            persona_by_lead = {}
+            if lead_ids:
+                persona_tag_names = [m['tag'] for m in MARBLISM_PERSONA_MAP.values()]
+                tag_fmt = ','.join(['%s'] * len(persona_tag_names))
+                cur.execute(
+                    f"SELECT lt.lead_id, t.name FROM lead_tags lt JOIN tags t ON t.id=lt.tag_id "
+                    f"WHERE lt.lead_id IN ({fmt}) AND t.name IN ({tag_fmt})",
+                    lead_ids + persona_tag_names
+                )
+                tag_to_persona = {m['tag']: k for k, m in MARBLISM_PERSONA_MAP.items()}
+                for r in cur.fetchall():
+                    persona_by_lead[r['lead_id']] = tag_to_persona.get(r['name'])
+
             cur.execute(
                 "SELECT b.id, b.label AS name, b.source, b.path AS batch_path, b.kind AS batch_kind, b.uploaded_by, b.row_count, b.new_count, b.dup_count, "
                 "b.suppressed_count, b.created_at, COUNT(DISTINCT t.lead_id) AS current_lead_count, "
@@ -7705,6 +7721,8 @@ def marketing_lists():
         if l.get('source_override'):
             l['utm_source'] = l['source_override']
         l['enrollment'] = enroll_by_lead.get(l['id'])
+        persona_slug = persona_by_lead.get(l['id'])
+        l['persona_label'] = MARBLISM_PERSONA_MAP[persona_slug]['label'] if persona_slug else None
 
     if seg_filter:
         leads = [l for l in leads if l.get('segment') == seg_filter]
