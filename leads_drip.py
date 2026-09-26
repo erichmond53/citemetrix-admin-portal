@@ -52,6 +52,7 @@ from datetime import datetime, timedelta
 import requests
 
 import lead_pool
+import segments
 from suppression import is_suppressed
 
 
@@ -95,7 +96,19 @@ def parse_leads_csv(file_bytes: bytes) -> list:
     None-safe -- see _ingest_lead_row), they just never get enrolled in an
     email campaign since enroll_batch/process_due_enrollments both require a
     real email to send to."""
-    text = file_bytes.decode('utf-8-sig', errors='replace')
+    # 2026-09-25: was decode('utf-8-sig', errors='replace') -- silently corrupted
+    # any non-UTF-8 byte into U+FFFD, permanently mangling accented names/companies
+    # on every import (found real corrupted records from this). Marblism's exports
+    # are sometimes Windows-saved (cp1252), so try that as a real fallback before
+    # giving up -- errors='replace' only as a last resort, never silently for the
+    # common case.
+    try:
+        text = file_bytes.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        try:
+            text = file_bytes.decode('cp1252')
+        except UnicodeDecodeError:
+            text = file_bytes.decode('utf-8-sig', errors='replace')
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         return []
@@ -112,6 +125,7 @@ def parse_leads_csv(file_bytes: bytes) -> list:
     last_col = find_col({'last name', 'lastname'})
     company_col = find_col({'company', 'company name', 'organization'})
     title_col = find_col({'title', 'job title', 'job', 'position'})
+    linkedin_col = find_col({'linkedin url', 'linkedin', 'linkedin profile', 'linkedin link'})
 
     rows = []
     for row in reader:
@@ -125,19 +139,20 @@ def parse_leads_csv(file_bytes: bytes) -> list:
             first_name, last_name = _split_name(row.get(name_col))
         else:
             first_name, last_name = '', ''
-        mapped_cols = (email_col, name_col, first_col, last_col, company_col, title_col)
+        mapped_cols = (email_col, name_col, first_col, last_col, company_col, title_col, linkedin_col)
         rows.append({
             'email': email or None,
             'first_name': first_name[:255],
             'last_name': last_name[:255],
             'company': (row.get(company_col) or '').strip()[:255] if company_col else '',
             'title': (row.get(title_col) or '').strip()[:255] if title_col else '',
+            'linkedin_url': (row.get(linkedin_col) or '').strip()[:500] if linkedin_col else '',
             'raw_data': {k: v for k, v in row.items() if k not in mapped_cols},
         })
     return rows
 
 
-def _ingest_lead_row(cursor, email, first_name, last_name, company, path, source_ref_id, event_payload, title=None):
+def _ingest_lead_row(cursor, email, first_name, last_name, company, path, source_ref_id, event_payload, title=None, linkedin_url=None):
     """One lead, one write path -- shared by import_batch()'s CSV loop and add_single_lead()'s
     one-at-a-time add, so suppression screening and touch/event bookkeeping only exist once.
     Dedupes globally against leads.email; a genuinely new email becomes a new `leads` row +
@@ -171,9 +186,9 @@ def _ingest_lead_row(cursor, email, first_name, last_name, company, path, source
 
     token = secrets.token_urlsafe(UNSUB_TOKEN_LEN)
     cursor.execute(
-        """INSERT INTO leads (email, first_name, last_name, company, title, original_source, original_source_ref_id, unsubscribe_token)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-        (email, first_name, last_name, company, title or None, path, source_ref_id, token)
+        """INSERT INTO leads (email, first_name, last_name, company, title, linkedin_url, original_source, original_source_ref_id, unsubscribe_token)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (email, first_name, last_name, company, title or None, linkedin_url or None, path, source_ref_id, token)
     )
     lead_id = cursor.lastrowid
 
@@ -204,7 +219,27 @@ def _ingest_lead_row(cursor, email, first_name, last_name, company, path, source
     return {'lead_id': lead_id, 'is_new': True, 'suppressed': bool(reason)}
 
 
-def import_batch(cursor, conn, batch_name: str, source: str, uploaded_by: int, rows: list, path: str = 'direct') -> dict:
+def tag_lead(cursor, lead_id: int, tag_names) -> None:
+    """Stamp one or more tags onto a lead by name, creating each tag if it doesn't already
+    exist. Idempotent via lead_tags' own UNIQUE(tag_id, lead_id). Shared by every ingestion
+    path (CSV upload, manual add, the WordPress sync scripts) so tag get-or-create logic
+    lives in exactly one place rather than being copy-pasted per caller."""
+    if isinstance(tag_names, str):
+        tag_names = [tag_names]
+    for name in tag_names:
+        if not name:
+            continue
+        cursor.execute("SELECT id FROM tags WHERE name=%s", (name,))
+        row = cursor.fetchone()
+        if row:
+            tag_id = row['id']
+        else:
+            cursor.execute("INSERT INTO tags (name) VALUES (%s)", (name,))
+            tag_id = cursor.lastrowid
+        cursor.execute("INSERT IGNORE INTO lead_tags (tag_id, lead_id) VALUES (%s,%s)", (tag_id, lead_id))
+
+
+def import_batch(cursor, conn, batch_name: str, source: str, uploaded_by: int, rows: list, path: str = 'direct', tag_names=None) -> dict:
     """Insert a source_refs row (kind='import_batch', path=path -- 'direct' or 'in_person')
     for this upload, then run every CSV row through _ingest_lead_row().
 
@@ -227,7 +262,9 @@ def import_batch(cursor, conn, batch_name: str, source: str, uploaded_by: int, r
         event_payload = {'batch_name': batch_name, 'source': source}
         if r['raw_data']:
             event_payload['raw_data'] = r['raw_data']
-        result = _ingest_lead_row(cursor, r['email'], r['first_name'], r['last_name'], r['company'], path, source_ref_id, event_payload, title=r.get('title'))
+        result = _ingest_lead_row(cursor, r['email'], r['first_name'], r['last_name'], r['company'], path, source_ref_id, event_payload, title=r.get('title'), linkedin_url=r.get('linkedin_url'))
+        if tag_names:
+            tag_lead(cursor, result['lead_id'], tag_names)
         if result['is_new']:
             new_count += 1
             if result['suppressed']:
@@ -250,7 +287,7 @@ def import_batch(cursor, conn, batch_name: str, source: str, uploaded_by: int, r
 
 
 def add_single_lead(cursor, conn, email: str, first_name: str, last_name: str, company: str,
-                     path: str, event_name: str, added_by: int) -> dict:
+                     path: str, event_name: str, added_by: int, tag_names=None) -> dict:
     """One-at-a-time manual add (In-Person or Direct) -- the counterpart to import_batch()
     for a single person instead of a CSV. If event_name is given, finds-or-creates a
     source_refs row (kind='show', same path) labeled with that event so multiple people
@@ -276,6 +313,8 @@ def add_single_lead(cursor, conn, email: str, first_name: str, last_name: str, c
         conn.commit()
 
     result = _ingest_lead_row(cursor, email, first_name, last_name, company, path, source_ref_id, {'method': 'manual_add'})
+    if tag_names:
+        tag_lead(cursor, result['lead_id'], tag_names)
 
     if source_ref_id:
         if result['is_new']:
@@ -431,6 +470,103 @@ def enroll_batch(cursor, conn, campaign_id: int, batch_id: int) -> dict:
              'skipped_no_email': skipped_no_email, 'already_checked_to_warm': already_checked_to_warm}
 
 
+def enroll_segment(cursor, conn, automation_id: int, segment_id: int) -> dict:
+    """Batch-enroll every lead matching a saved segment into an automation on the NEW
+    engine -- the new engine's counterpart to enroll_batch(), which only writes to the
+    legacy drip_enrollments table the new engine's cron never reads. Reuses enroll_batch()'s
+    exclusion-rule structure (no-email, suppression, lead_pool.is_eligible()) since those are
+    universal data-hygiene concerns, not cold-campaign-specific ones.
+
+    Deliberately does NOT reuse enroll_batch()'s cold->warm auto-redirect
+    (_matching_warm_campaign_id/WARM_SUFFIX) -- that's cold-campaign business logic tied to a
+    naming convention. A segment enroll puts a lead into the automation actually requested;
+    branching within the graph (if_else) is what handles routing elsewhere, not the enroll
+    step -- auto-redirecting here too would be redundant and surprising for a non-cold
+    automation.
+
+    Start-node resolution mirrors the cross-automation hand-off inside
+    _advance_automation_graph() exactly (same call shape, run_id=None -- no prior run/send
+    exists yet for a fresh enrollment): walk from the automation's own trigger node until
+    reaching a real pause point, then create/revive the run there via
+    _create_or_revive_run(). This lets a lead pass through any add_to_list/delay nodes between
+    the trigger and the first real send, same as a hand-off already does.
+
+    Returns {'enrolled', 'skipped_suppressed', 'skipped_nurture_owned',
+    'skipped_cluster_conflict', 'skipped_no_email'}."""
+    cursor.execute(
+        "SELECT node_key FROM automation_steps WHERE automation_id=%s AND node_type='trigger'",
+        (automation_id,)
+    )
+    trigger = cursor.fetchone()
+    empty_result = {'enrolled': 0, 'skipped_suppressed': 0, 'skipped_nurture_owned': 0,
+                     'skipped_cluster_conflict': 0, 'skipped_no_email': 0}
+    if not trigger:
+        return empty_result
+
+    candidate_ids = segments.segment_member_ids(cursor, segment_id)
+    if not candidate_ids:
+        return empty_result
+
+    placeholders = ','.join(['%s'] * len(candidate_ids))
+
+    cursor.execute(
+        f"""SELECT DISTINCT l.id FROM leads l
+            LEFT JOIN ses_suppressions s ON s.email_address = l.email
+            LEFT JOIN sendy_suppressions sy ON sy.email_address = l.email
+            WHERE l.id IN ({placeholders}) AND l.email IS NOT NULL AND l.suppressed_at IS NULL
+              AND s.email_address IS NULL AND sy.email_address IS NULL""",
+        candidate_ids
+    )
+    clean_ids = [row['id'] for row in cursor.fetchall()]
+
+    cursor.execute(
+        f"SELECT COUNT(*) AS n FROM leads l WHERE l.id IN ({placeholders}) AND l.email IS NULL",
+        candidate_ids
+    )
+    skipped_no_email = cursor.fetchone()['n']
+
+    cursor.execute(
+        f"""SELECT COUNT(DISTINCT l.id) AS n FROM leads l
+            LEFT JOIN ses_suppressions s ON s.email_address = l.email
+            LEFT JOIN sendy_suppressions sy ON sy.email_address = l.email
+            WHERE l.id IN ({placeholders})
+              AND (l.suppressed_at IS NOT NULL OR s.email_address IS NOT NULL OR sy.email_address IS NOT NULL)""",
+        candidate_ids
+    )
+    skipped_suppressed = cursor.fetchone()['n']
+
+    eligible_ids = []
+    skipped_nurture_owned = 0
+    skipped_cluster_conflict = 0
+    for lead_id in clean_ids:
+        eligible, reason = lead_pool.is_eligible(cursor, lead_id)
+        if eligible:
+            eligible_ids.append(lead_id)
+        elif 'wp_nurture_owned' in reason:
+            skipped_nurture_owned += 1
+        else:
+            skipped_cluster_conflict += 1
+
+    enrolled = 0
+    now = datetime.now()
+    for lead_id in eligible_ids:
+        outcome = _advance_automation_graph(
+            cursor, conn, automation_id, run_id=None, start_node_key=trigger['node_key'],
+            anchor_time=now, lead_id=lead_id,
+        )
+        if outcome.get('status') == 'next_send':
+            result = _create_or_revive_run(
+                cursor, conn, automation_id, lead_id, outcome['node_key'], due_at=outcome['due_at'],
+            )
+            if result['enrolled']:
+                enrolled += 1
+
+    return {'enrolled': enrolled, 'skipped_suppressed': skipped_suppressed,
+            'skipped_nurture_owned': skipped_nurture_owned,
+            'skipped_cluster_conflict': skipped_cluster_conflict,
+            'skipped_no_email': skipped_no_email}
+
+
 WARM_SUFFIX = ' — Warm (Checked)'
 
 
@@ -453,175 +589,6 @@ def _matching_warm_campaign_id(cursor, cold_campaign_name: str):
     cursor.execute("SELECT id FROM drip_campaigns WHERE name=%s", (cold_campaign_name + WARM_SUFFIX,))
     row = cursor.fetchone()
     return row['id'] if row else None
-
-
-def enroll_single_lead(cursor, conn, campaign_id: int, lead_id: int, due_at=None) -> dict:
-    """Enroll (or revive) exactly one lead into one campaign -- the single-lead counterpart
-    to enroll_batch()'s batch loop, extracted so process_check_completions() (branch a lead
-    into its warm track the moment its cold enrollment would otherwise have sent) and the
-    already-checked edge case in enroll_batch() can both drive one lead into one campaign
-    without going through the batch/source_refs machinery neither of them has.
-
-    due_at defaults to right now: CITEMETRIX-Drip-Campaigns.md's branching point 2 says
-    'start warm Step 1' at the moment of branching, not day_offset days from branching --
-    and since the warm campaign's own Step 1 is day_offset=0 already, 'now' and 'now + 0
-    days' land on the same instant regardless, so there's no separate case to handle.
-
-    Same suppressed-row revival rule as enroll_batch(): an existing 'suppressed' row is
-    reset to active/step 0; active/completed/unsubscribed/cancelled rows are left alone
-    (already on this campaign, nothing to do). Returns {'enrolled': bool, 'reason': str|None}
-    -- reason is set (and enrolled=False) only when a live row already existed and blocked a
-    fresh enrollment, so a caller doing a bulk branching pass can tell a genuine new
-    enrollment apart from a no-op on an already-branched lead."""
-    now = datetime.now()
-    if due_at is None:
-        due_at = now
-    cursor.execute(
-        "SELECT id, status FROM drip_enrollments WHERE lead_id=%s AND campaign_id=%s",
-        (lead_id, campaign_id)
-    )
-    existing = cursor.fetchone()
-    if existing is None:
-        cursor.execute(
-            """INSERT INTO drip_enrollments (lead_id, campaign_id, enrolled_at, current_step, next_send_due_at, status)
-               VALUES (%s,%s,%s,0,%s,'active')""",
-            (lead_id, campaign_id, now.strftime('%Y-%m-%d %H:%M:%S'), due_at.strftime('%Y-%m-%d %H:%M:%S'))
-        )
-        conn.commit()
-        return {'enrolled': True, 'reason': None}
-    if existing['status'] == 'suppressed':
-        cursor.execute(
-            """UPDATE drip_enrollments SET status='active', current_step=0,
-                   enrolled_at=%s, next_send_due_at=%s, last_sent_at=NULL
-               WHERE id=%s""",
-            (now.strftime('%Y-%m-%d %H:%M:%S'), due_at.strftime('%Y-%m-%d %H:%M:%S'), existing['id'])
-        )
-        conn.commit()
-        return {'enrolled': True, 'reason': None}
-    return {'enrolled': False, 'reason': f"already {existing['status']} on this campaign"}
-
-
-def process_check_completions(admin_cursor, admin_conn, product_cursor) -> dict:
-    """CITEMETRIX-Drip-Campaigns.md's branching summary, points 1, 2, and 5: a lead who
-    completes a /check/ scan while actively on a COLD track gets pulled off cold and dropped
-    into the matching warm track, instead of finishing out a cold sequence that no longer
-    fits. Call this once per cron cycle, BEFORE process_due_enrollments() sends anything, so
-    a step that would otherwise have gone out on this very run goes out as the warm
-    campaign's Step 1 instead -- never one more cold email first.
-
-    'Has completed a check' (point 1) is detected via citemetrix_freecheck_log on the
-    PRODUCT box (product_cursor): every /check/ scan run -- domain-only or with an email
-    left -- logs a row there via log_scan_run() (see class-citemetrix-free-score.php), and
-    that call now also stamps drip_lead_token whenever the click that led here carried
-    &cm_lead=<token> (see build_cta()'s docstring for how the token gets there). So a
-    matching row = this lead ran a check, full stop -- independent of whether they ever
-    left an email, which is exactly what 'completed a check' means here (NOT the same
-    signal migrate_step1b.py's free_check_completed lead_events use for its own, differently
-    -sourced population -- that one requires an email capture into wp_citemetrix_score_leads).
-    A lead who somehow already has a free_check_completed lead_events row (e.g. reached
-    admin_portal via the OTHER free-check path) counts too, checked first since it's a plain
-    local lookup and skips a product-DB round trip for those leads.
-
-    Point 5 ('never on both tracks simultaneously; entering warm cancels ALL pending cold
-    steps') is enforced by cancelling the ENTIRE remaining cold enrollment
-    (status='cancelled', not just skipping the next step) before enrolling in warm. A
-    cancelled row's next_send_due_at is left as-is but process_due_enrollments() only ever
-    selects status='active' rows, so a cancelled enrollment can never resume sending
-    regardless of what its due date says.
-
-    Point 3 (already-checked leads entering the DB) is NOT this function's job -- there's no
-    active cold enrollment yet to cancel by definition; that's enroll_batch()'s own edge
-    case (see its docstring).
-
-    Idempotent by construction: once a cold enrollment is cancelled here it's no longer
-    status='active', so it's excluded from the very query this function starts with on its
-    next run -- no separate "already branched" check is needed to avoid double-processing.
-
-    Writes a 'free_check_completed' lead_events row (mirroring migrate_step1b.py's own
-    payload shape, so render_merge_tags()/_platform_stats() pick it up for warm Step 1
-    personalization exactly like they already do for the other population) whenever one
-    doesn't already exist for this lead -- brand_name/model_score/category come straight off
-    the freecheck_log row (model_score = category_visibility, matching
-    class-citemetrix-free-score.php's own `$model_score = $category_visibility` -- that log
-    table has no platform_results column, so that key is left None; render_merge_tags'
-    existing fallbacks ('several'/'some'/'key AI platforms') cover it same as always) plus a
-    'branched_to_warm' lead_events row recording which campaign moved to which, for the
-    audit trail.
-
-    Returns {'cold_active_checked': int, 'branched': int}."""
-    admin_cursor.execute(
-        """SELECT e.id AS enrollment_id, e.lead_id, e.campaign_id, l.unsubscribe_token,
-                  c.name AS campaign_name
-           FROM drip_enrollments e
-           JOIN leads l ON l.id = e.lead_id
-           JOIN drip_campaigns c ON c.id = e.campaign_id
-           WHERE e.status='active'"""
-    )
-    active_cold = admin_cursor.fetchall()
-
-    cold_active_checked = 0
-    branched = 0
-    now = datetime.now()
-    for row in active_cold:
-        warm_campaign_id = _matching_warm_campaign_id(admin_cursor, row['campaign_name'])
-        if not warm_campaign_id:
-            continue  # not a cold campaign with a warm counterpart (e.g. the free-check nurture campaign)
-        cold_active_checked += 1
-
-        admin_cursor.execute(
-            "SELECT id FROM lead_events WHERE lead_id=%s AND type='free_check_completed' LIMIT 1",
-            (row['lead_id'],)
-        )
-        fc_event = admin_cursor.fetchone()
-
-        fc_row = None
-        if not fc_event and row['unsubscribe_token']:
-            product_cursor.execute(
-                """SELECT domain, brand_name, category, brand_recognition, category_visibility,
-                          utm_source, utm_medium, utm_campaign, source_page, created_at
-                   FROM wp_citemetrix_freecheck_log
-                   WHERE drip_lead_token=%s ORDER BY created_at DESC LIMIT 1""",
-                (row['unsubscribe_token'],)
-            )
-            fc_row = product_cursor.fetchone()
-
-        if not fc_event and not fc_row:
-            continue  # hasn't checked yet -- stays on cold
-
-        if not fc_event and fc_row:
-            payload = json.dumps({
-                'domain': fc_row['domain'], 'brand_name': fc_row['brand_name'], 'category': fc_row['category'],
-                'brand_recognition': fc_row['brand_recognition'], 'model_score': fc_row['category_visibility'],
-                'utm_source': fc_row['utm_source'], 'utm_medium': fc_row['utm_medium'], 'utm_campaign': fc_row['utm_campaign'],
-                'source_page': fc_row['source_page'], 'platform_results': None,
-            }, default=str)
-            admin_cursor.execute(
-                """INSERT INTO lead_events (lead_id, occurred_at, type, channel, payload)
-                   VALUES (%s,%s,'free_check_completed','web',%s)""",
-                (row['lead_id'], fc_row['created_at'], payload)
-            )
-            admin_conn.commit()
-
-        admin_cursor.execute("UPDATE drip_enrollments SET status='cancelled' WHERE id=%s", (row['enrollment_id'],))
-        admin_conn.commit()
-        result = enroll_single_lead(admin_cursor, admin_conn, warm_campaign_id, row['lead_id'], due_at=now)
-        if result['enrolled']:
-            # lead_events.type is a fixed ENUM with no 'branched_to_warm' member (adding one
-            # would mean an ALTER TABLE for a single audit-trail row) -- 'note' already exists
-            # for exactly this kind of generic system annotation, so the specific event is
-            # named in the payload instead (event='branched_to_warm'), queryable via
-            # JSON_EXTRACT(payload,'$.event') same as any other 'note' row would be. channel
-            # is left NULL (nullable, and its own fixed ENUM has no 'system' member either) --
-            # this isn't a lead-facing touch on any channel, it's internal bookkeeping.
-            admin_cursor.execute(
-                """INSERT INTO lead_events (lead_id, occurred_at, type, channel, payload)
-                   VALUES (%s,NOW(),'note',NULL,%s)""",
-                (row['lead_id'], json.dumps({'event': 'branched_to_warm', 'from_campaign_id': row['campaign_id'], 'to_campaign_id': warm_campaign_id}))
-            )
-            admin_conn.commit()
-            branched += 1
-
-    return {'cold_active_checked': cold_active_checked, 'branched': branched}
 
 
 def render_merge_tags(text: str, lead: dict) -> str:
@@ -781,10 +748,18 @@ def _cta_button_html(cta_url, cta_text):
     font = 'Arial,Helvetica,sans-serif'
     teal = '#00D4AA'
     navy = '#0A1628'
+    # 2026-09-23: Outlook's VML v:roundrect doesn't reliably wrap text onto a second line
+    # without clipping the shape, so instead of trying to make it wrap, the box is sized
+    # wide enough to fit the button's own text on ONE line -- character-width estimate
+    # tuned for 15px bold Arial (~9.5px/char), plus the same 26px horizontal padding the
+    # modern (!mso) anchor below uses, so both versions read as the same button. The old
+    # fixed 240px width didn't grow for longer CTA text (confirmed: "Show me how to use
+    # this with clients", 37 chars, needed 2 lines and the box stayed 240px, clipping it).
+    vml_width = max(200, round(len(cta_text) * 9.5) + 72)
     return (
         f'<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:8px auto;"><tr><td align="center" bgcolor="{teal}" style="border-radius:10px;">'
-        f'<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{cta_url}" style="height:44px;v-text-anchor:middle;width:240px;" arcsize="22%" strokecolor="{teal}" fillcolor="{teal}"><w:anchorlock/><center style="color:{navy};font-family:{font};font-size:15px;font-weight:bold;">{cta_text}</center></v:roundrect><![endif]-->'
-        f'<!--[if !mso]><!--><a href="{cta_url}" style="display:inline-block;padding:12px 26px;font-family:{font};font-size:15px;font-weight:700;color:{navy};text-decoration:none;border-radius:10px;background:{teal};">{cta_text}</a><!--<![endif]-->'
+        f'<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{cta_url}" style="height:44px;v-text-anchor:middle;width:{vml_width}px;" arcsize="22%" strokecolor="{teal}" fillcolor="{teal}"><w:anchorlock/><center style="color:{navy};font-family:{font};font-size:15px;font-weight:bold;">{cta_text}</center></v:roundrect><![endif]-->'
+        f'<!--[if !mso]><!--><a href="{cta_url}" style="display:inline-block;padding:12px 26px;font-family:{font};font-size:15px;font-weight:700;color:{navy};text-decoration:none;border-radius:10px;background:{teal};white-space:nowrap;">{cta_text}</a><!--<![endif]-->'
         '</td></tr></table>'
     )
 
@@ -860,98 +835,659 @@ def apply_cta_tags(body: str, body_html, step: dict, lead_token: str = None):
     return text_out, html_out
 
 
+# 2026-09-22 (email-builder-spec-2026-09-21.md SS4.2): shared classifier for
+# separating real human opens/clicks from automated security-scanner traffic.
+# ONE function, called from the branch evaluator, the per-recipient table
+# (work order SSD.1) and any report -- not the same logic written three
+# times, which is the is_eligible() lesson (work order SSB.3) arriving here.
+#
+# Three states, not two. A fast open forced into a binary opened/not-opened
+# either wrongly counts a scanner as a real lead, or -- the direction that
+# actually costs more at this volume -- wrongly discards a real prospect who
+# opened and clicked within minutes, the hottest kind of lead there is. The
+# middle state exists so a misrouted lead is recoverable (the branch UI's
+# own choice of where it goes), not silently lost.
+#
+# Classifies on open speed alone, not on whether a click followed. The first
+# version of this filter treated "no click" as evidence of a real human,
+# which forced a genuinely ambiguous case (an open landing in 94 seconds --
+# bot-speed -- with no click after it) into "human" by default rather than
+# into the unknown middle where it belongs. Click timing is informative but
+# is not required to flag an open as suspicious; the scanner signal is in
+# how fast the open itself happened, not in what happened after.
+#
+# Threshold source: Agency Principals (campaign_id=18), 2026-09-21/22. 28 of
+# step 3's 31 opens land 32-219 seconds after send, tight and uniform across
+# 28 different recipients -- real human variability does not produce that.
+# The remaining opens in that step took 18 and 38 minutes, the shape a real
+# person's open actually has.
+ENGAGEMENT_FILTER_VERSION = 'v1-2026-09-22'
+ENGAGEMENT_FAST_OPEN_SECONDS = 300  # open recorded within this many seconds of send
+
+
+def classify_engagement(sent_at, opened_at, clicked_at=None):
+    """Classify one send's engagement into exactly one of three states.
+
+    Returns (state, filter_version):
+      'not_opened'          -- opened_at is None
+      'opened_bot_pattern'  -- opened within ENGAGEMENT_FAST_OPEN_SECONDS of sent_at
+      'opened_human_like'   -- opened at or after that threshold
+
+    clicked_at is accepted but not currently used in the classification
+    itself (see module comment above) -- kept in the signature so a caller
+    can pass the full row without the classifier's own logic dictating what
+    the caller has on hand, and so a future filter version can use it
+    without changing every call site.
+
+    filter_version is returned alongside every call so a caller that
+    persists a classification (a branch decision) can stamp which version
+    made it -- email-builder-spec-2026-09-21.md SS4.2's second engineering
+    requirement. Improving this function later must never silently rewrite
+    a decision already made; only ever record against the version live at
+    the time the decision was made.
+    """
+    if opened_at is None:
+        return 'not_opened', ENGAGEMENT_FILTER_VERSION
+
+    secs_to_open = (opened_at - sent_at).total_seconds()
+    if secs_to_open < ENGAGEMENT_FAST_OPEN_SECONDS:
+        return 'opened_bot_pattern', ENGAGEMENT_FILTER_VERSION
+
+    return 'opened_human_like', ENGAGEMENT_FILTER_VERSION
+
+
+# Work order §7.4/§8.6: neither send path capped how many times one address could be
+# reached, and incidents/nurture-email-runaway-2026-09-21.md is 8,469 sends to one address in
+# nine days because nothing watched volume. Generous relative to real cadence (a lead normally
+# gets at most one send per day per sequence) so it never touches legitimate behavior, while
+# still catching a runaway bug orders of magnitude sooner than the incident that prompted this.
+SEND_CEILING_MAX_PER_24H = 5
+
+# Work order §10.4: a refusal alone doesn't decide what happens to the run. Left un-deferred,
+# next_due_at stays in the past and the SAME row gets re-selected, re-checked, and re-logged
+# every single cron cycle until the 24h window clears on its own -- a bounded but wasteful
+# hourly hot loop, and (worse) one new drip_send_log row per cycle for a single held-back send.
+# Deferring past the window fixes the loop; capping deferrals is what makes a lead who trips
+# this repeatedly surface for a human instead of retrying forever -- same "bounded retries with
+# a hard attempt limit" shape §4A.3 requires of enrichment, applied here too.
+SEND_CEILING_MAX_DEFERRALS = 3
+
+
+def check_send_ceiling(cursor, email_address: str, window_hours: int = 24, limit: int = SEND_CEILING_MAX_PER_24H):
+    """Counts real 'sent' rows to this address across BOTH engines in the trailing window --
+    keyed on email, not lead_id, since the same person can exist as more than one `leads` row
+    (confirmed this session: a free-check signup and a later Marblism import of the same email
+    are two different lead_id values). drip_send_log.run_key covers the new engine,
+    .enrollment_id the legacy one; a send logged either way counts against the same address.
+
+    Returns (ok: bool, count: int) -- ok=False means the caller must not send."""
+    cursor.execute(
+        """SELECT COUNT(*) AS n FROM drip_send_log dsl
+           LEFT JOIN automation_runs ar ON ar.id = dsl.run_key
+           LEFT JOIN drip_enrollments de ON de.id = dsl.enrollment_id
+           LEFT JOIN leads l1 ON l1.id = ar.lead_id
+           LEFT JOIN leads l2 ON l2.id = de.lead_id
+           WHERE dsl.status='sent' AND dsl.sent_at > DATE_SUB(NOW(), INTERVAL %s HOUR)
+             AND (l1.email=%s OR l2.email=%s)""",
+        (window_hours, email_address, email_address)
+    )
+    count = cursor.fetchone()['n']
+    return count < limit, count
+
+
+def _alert_send_ceiling_tripped(cursor, send_email_fn, email_address: str, count: int):
+    """Fires once per address per 24h window, not once per cron cycle -- checks whether a
+    'rate_limited' row for this address already exists in the window before sending (the row
+    this call's caller just inserted counts as 1, so >1 means already alerted). Per this
+    codebase's existing alerting posture (citemetrix-alerting-philosophy: alerts fire on
+    genuine sustained problems, not routine variance) -- a tripped send ceiling is exactly
+    that, not noise. Never let an alert failure block the send loop itself."""
+    cursor.execute(
+        """SELECT COUNT(*) AS n FROM drip_send_log dsl
+           LEFT JOIN automation_runs ar ON ar.id = dsl.run_key
+           LEFT JOIN drip_enrollments de ON de.id = dsl.enrollment_id
+           LEFT JOIN leads l1 ON l1.id = ar.lead_id
+           LEFT JOIN leads l2 ON l2.id = de.lead_id
+           WHERE dsl.status='rate_limited' AND dsl.sent_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+             AND (l1.email=%s OR l2.email=%s)""",
+        (email_address, email_address)
+    )
+    if cursor.fetchone()['n'] > 1:
+        return
+    try:
+        send_email_fn(
+            to='admin@citemetrix.com',
+            subject=f'[CiteMetrix] Send ceiling tripped: {email_address}',
+            body_text=(
+                f'{email_address} already received {count} email(s) in the last 24 hours and has '
+                f'been blocked from further sends (cap {SEND_CEILING_MAX_PER_24H}/24h). Further '
+                f'sends to this address are blocked and logged as drip_send_log.status=\'rate_limited\' '
+                f'until the window clears. Check drip_send_log for this address before raising the '
+                f'cap or manually clearing anything.'
+            ),
+        )
+    except Exception:
+        pass
+
+
 def build_unsubscribe_footer(unsub_url: str) -> str:
     return f"\n\n—\nEric Richmond\nCiteMetrix LLC, PO Box 324, Norwalk, CT 06853-0324\nDon't want these emails? {unsub_url}"
 
 
 def build_unsubscribe_footer_html(unsub_url: str) -> str:
-    return (
+    inner = (
         '<p style="margin:24px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;'
         'line-height:1.6;color:#8a94a3;border-top:1px solid #e5e7eb;padding-top:16px;">'
         'Eric Richmond<br>CiteMetrix LLC, PO Box 324, Norwalk, CT 06853-0324<br>'
         f'Don\'t want these emails? <a href="{unsub_url}" style="color:#8a94a3;">Unsubscribe</a></p>'
     )
+    return (
+        '<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation">'
+        '<tr><td align="center">'
+        '<table width="600" border="0" cellpadding="0" cellspacing="0" role="presentation" '
+        'style="max-width:600px;width:100%;">'
+        f'<tr><td>{inner}</td></tr>'
+        '</table>'
+        '</td></tr></table>'
+    )
 
 
-def process_due_enrollments(admin_cursor, admin_conn, send_email_fn, base_url: str, max_sends: int = 50) -> dict:
-    """The cron entry point. Finds enrollments due right now, sends the
-    current step, advances to the next, or marks completed if there's no
-    next step. max_sends caps a single run so a large backlog (e.g. after
-    downtime) drips out over several cron cycles instead of firing a
-    hundred emails in one burst -- same pacing principle as the outreach
-    tool's daily send cap.
+def wrap_html_document(body_html: str) -> str:
+    """2026-09-23: needs a real <html><head>...</head><body> document, not a bare
+    fragment -- Outlook/Word synthesizes its own unstyled document around a bare
+    fragment otherwise. Confirmed against cac-business-dev's SendRadiusDigest.php,
+    a proven-working Outlook-safe sender for the exact same audience/environment
+    (Eric's own recipients, same Outlook client) -- its actual working shape does
+    NOT put align="center" on <body> or on any <table> at all; centering is done
+    purely via <td align="center"> on the wrapping cell (already present in each
+    email's own body_html -- see apply_hero_images.py), plus the VML namespace
+    declarations and MSO PixelsPerInch block below, which that reference always
+    includes and this codebase never had. An earlier version of this function put
+    align="center" on <body> based on a different (also real, but apparently not
+    load-bearing) competitor email; dropped in favor of matching the one reference
+    that's PROVEN to render correctly for CiteMetrix's own Eric, in the same
+    Outlook, every send, today. Callers must invoke this ONCE, as the very last
+    step after the unsubscribe footer (and any other trailing HTML) has already
+    been appended -- wrapping any earlier would leave that trailing content
+    outside </html>, which is invalid."""
+    return (
+        '<!doctype html>'
+        '<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">'
+        '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch>'
+        '</o:OfficeDocumentSettings></xml></noscript><![endif]-->'
+        '</head>'
+        f'<body style="margin:0;padding:0;">{body_html}</body></html>'
+    )
 
-    Two distinct suppression paths, both against `leads` now: a real
-    self-serve unsubscribe (leads.suppression_reason='unsubscribed', a
-    genuine permanent opt-out) vs. everything else that blocks a send
-    (leads.suppressed_at already set from import/migration, OR the live
-    ses_suppressions/sendy_suppressions join -- an address can land on
-    either mirror after enrollment and before its send date, so the live
-    check is the authoritative one, not the stored flag). Both are marked
-    and logged (step-1-brief.md SS9.1) rather than silently dropped.
 
-    A third gate, added step 3c (step1brief (3).md SS11.1): lead_pool.
-    is_eligible() re-checked at send time, not just at enrollment, per
-    decisions-v2's live-not-stale principle -- catches a lead that became
-    wp_nurture_owned or picked up a cluster conflict after it was already
-    enrolled. exclude_enrollment_id=row['enrollment_id'] is required here:
-    without it the lead's own active row would always self-block the check
-    (is_eligible's job is normally "can a NEW enrollment start", and this
-    row already is one)."""
+def _matching_warm_automation_id(cursor, cold_automation_name: str):
+    """automations-table counterpart to _matching_warm_campaign_id() above -- same
+    WARM_SUFFIX naming convention, same None-means-not-available contract. Kept as
+    its own small function rather than parameterizing the legacy one: the two
+    engines' schemas diverge (automations vs drip_campaigns) enough that sharing one
+    function would mean threading a table name through every query, which is more
+    confusing than two short mirrors of the same idea."""
+    if not cold_automation_name:
+        return None
+    cursor.execute("SELECT id FROM automations WHERE name=%s", (cold_automation_name + WARM_SUFFIX,))
+    row = cursor.fetchone()
+    return row['id'] if row else None
+
+
+def _create_or_revive_run(cursor, conn, automation_id: int, lead_id: int, start_node_key: str, due_at=None) -> dict:
+    """automation_runs counterpart to enroll_single_lead() -- identical semantics,
+    targeting the new engine's table: a suppressed row is revived (reset to active,
+    repositioned at start_node_key), active/completed/unsubscribed/blocked/cancelled
+    rows are left alone. due_at defaults to now, same rationale as
+    enroll_single_lead() (a warm automation's first send node has no preceding delay
+    worth waiting on when branching in from a completed check).
+
+    Returns {'enrolled': bool, 'reason': str|None}, same shape as enroll_single_lead()."""
+    now = datetime.now()
+    if due_at is None:
+        due_at = now
+    cursor.execute(
+        "SELECT id, status FROM automation_runs WHERE lead_id=%s AND automation_id=%s",
+        (lead_id, automation_id)
+    )
+    existing = cursor.fetchone()
+    if existing is None:
+        cursor.execute(
+            """INSERT INTO automation_runs (automation_id, lead_id, current_node_key, next_due_at, status, entered_at)
+               VALUES (%s,%s,%s,%s,'active',%s)""",
+            (automation_id, lead_id, start_node_key, due_at.strftime('%Y-%m-%d %H:%M:%S'), now.strftime('%Y-%m-%d %H:%M:%S'))
+        )
+        conn.commit()
+        return {'enrolled': True, 'reason': None}
+    if existing['status'] == 'suppressed':
+        cursor.execute(
+            """UPDATE automation_runs SET status='active', current_node_key=%s,
+                   entered_at=%s, next_due_at=%s, last_sent_at=NULL
+               WHERE id=%s""",
+            (start_node_key, now.strftime('%Y-%m-%d %H:%M:%S'), due_at.strftime('%Y-%m-%d %H:%M:%S'), existing['id'])
+        )
+        conn.commit()
+        return {'enrolled': True, 'reason': None}
+    return {'enrolled': False, 'reason': f"already {existing['status']} on this automation"}
+
+
+def _advance_automation_graph(cursor, conn, automation_id: int, run_id: int, start_node_key, anchor_time, lead_id: int) -> dict:
+    """Walk forward from start_node_key through every node that doesn't itself
+    consume a cron cycle, until reaching one of three outcomes for this run:
+
+      {'status': 'next_send', 'node_key': <send_email node>, 'due_at': <datetime>}
+      {'status': 'unsubscribed'}
+      {'status': 'completed'}   -- ran off the end of the graph, or hit a dangling
+                                   pointer (treated the same as "nothing left here")
+
+    Called right after a successful send (start_node_key = that send node's
+    next_node_key, anchor_time = the moment the send just completed) -- so a
+    'delay' node's due_at is always anchored on actual send time, never on
+    entered_at, preserving process_due_enrollments()'s existing fix for the
+    2026-09-08 same-day step1+step2 bug (day_offset is 'days after this step
+    actually sent', not 'days after original enrollment').
+
+    if_else classifies the run's most recent send (by drip_send_log.run_key) via
+    the shared classify_engagement() and stamps (state, filter_version) to
+    automation_run_events BEFORE picking an edge -- email-builder-spec-2026-09-21.md
+    SS4.2's second engineering requirement, so improving the filter later can never
+    silently rewrite a routing decision already made. The three-state classifier
+    reconciles onto the two graph edges via config: an exact 'opened_human_like'
+    (or whatever states config lists) match takes next_node_key; 'opened_bot_pattern'
+    -- the recoverable middle state -- takes whichever edge config's middle_routing
+    says; everything else takes next_node_key_alt.
+
+    add_to_list/remove_from_list are structural pass-throughs right now: the graph
+    walks through them correctly (a campaign built with these nodes doesn't get
+    stuck), but no list-membership write happens yet. The backing mechanism
+    (lead_batches vs. a new first-class `lists` table) is an open decision for Eric
+    per the approved plan -- this deliberately does not guess an answer.
+
+    A visited-node cycle guard raises rather than looping forever on a malformed
+    graph, so a broken automation surfaces loudly on the one run that hits it
+    instead of silently spinning the cron."""
+    node_key = start_node_key
+    due_at = anchor_time
+    visited = set()
+    while node_key:
+        if node_key in visited:
+            raise RuntimeError(f"automation {automation_id}: graph cycle detected at node {node_key}")
+        visited.add(node_key)
+
+        cursor.execute(
+            "SELECT node_key, node_type, config, next_node_key, next_node_key_alt, "
+            "next_automation_id, next_automation_id_alt "
+            "FROM automation_steps WHERE automation_id=%s AND node_key=%s",
+            (automation_id, node_key)
+        )
+        node = cursor.fetchone()
+        if not node:
+            return {'status': 'completed'}
+
+        if node['node_type'] == 'send_email':
+            return {'status': 'next_send', 'node_key': node['node_key'], 'due_at': due_at}
+
+        if node['node_type'] == 'unsubscribe':
+            return {'status': 'unsubscribed'}
+
+        if node['node_type'] == 'delay':
+            cfg = json.loads(node['config']) if node['config'] else {}
+            value = cfg.get('value', 0)
+            unit = cfg.get('unit', 'days')
+            due_at = anchor_time + (timedelta(hours=value) if unit == 'hours' else timedelta(days=value))
+            node_key = node['next_node_key']
+            continue
+
+        if node['node_type'] in ('add_to_list', 'remove_from_list'):
+            cfg = json.loads(node['config']) if node['config'] else {}
+            list_id = cfg.get('list_id')
+            if list_id is not None:
+                if node['node_type'] == 'add_to_list':
+                    cursor.execute('INSERT IGNORE INTO list_memberships (list_id, lead_id) VALUES (%s,%s)', (list_id, lead_id))
+                else:
+                    cursor.execute('DELETE FROM list_memberships WHERE list_id=%s AND lead_id=%s', (list_id, lead_id))
+                conn.commit()
+            node_key = node['next_node_key']
+            continue
+
+        if node['node_type'] == 'if_else':
+            cursor.execute(
+                "SELECT sent_at, opened_at, clicked_at FROM drip_send_log WHERE run_key=%s ORDER BY sent_at DESC LIMIT 1",
+                (run_id,)
+            )
+            last_send = cursor.fetchone()
+            if last_send:
+                state, filter_version = classify_engagement(last_send['sent_at'], last_send['opened_at'], last_send['clicked_at'])
+            else:
+                state, filter_version = 'not_opened', ENGAGEMENT_FILTER_VERSION
+
+            cfg = json.loads(node['config']) if node['config'] else {}
+            true_states = cfg.get('true_states', [])
+            middle_routing = cfg.get('middle_routing', 'false')
+
+            if state in true_states:
+                branch = 'true'
+            elif state == 'opened_bot_pattern':
+                branch = middle_routing
+            else:
+                branch = 'false'
+
+            if branch == 'true':
+                next_key, next_automation = node['next_node_key'], node['next_automation_id']
+            else:
+                next_key, next_automation = node['next_node_key_alt'], node['next_automation_id_alt']
+
+            # Cross-automation hand-off (branching extension, 2026-09-22): an edge whose
+            # next_automation_id is set routes this run to a DIFFERENT automation
+            # entirely rather than continuing this graph -- generalizes the existing
+            # cold->warm hand-off (process_check_completions_runs, unchanged) into
+            # something any branch can do. Walk the target automation's own graph from
+            # its trigger to find where a fresh run actually starts (same technique
+            # process_check_completions_runs already uses), then create/revive a run
+            # there. The source run still just completes -- which automation it handed
+            # off to is recorded in this event row's branch_taken, not in run state.
+            if next_automation and next_automation != automation_id:
+                cursor.execute(
+                    """INSERT INTO automation_run_events
+                         (run_key, node_key, node_type, branch_taken, engagement_state, filter_version)
+                       VALUES (%s,%s,'if_else',%s,%s,%s)""",
+                    (run_id, node['node_key'], f'automation:{next_automation}', state, filter_version)
+                )
+                conn.commit()
+                cursor.execute(
+                    "SELECT node_key FROM automation_steps WHERE automation_id=%s AND node_type='trigger'",
+                    (next_automation,)
+                )
+                trigger = cursor.fetchone()
+                if trigger:
+                    target_outcome = _advance_automation_graph(
+                        cursor, conn, next_automation, run_id=None, start_node_key=trigger['node_key'],
+                        anchor_time=datetime.now(), lead_id=lead_id,
+                    )
+                    if target_outcome.get('status') == 'next_send':
+                        _create_or_revive_run(
+                            cursor, conn, next_automation, lead_id,
+                            target_outcome['node_key'], due_at=target_outcome['due_at'],
+                        )
+                return {'status': 'completed'}
+
+            cursor.execute(
+                """INSERT INTO automation_run_events
+                     (run_key, node_key, node_type, branch_taken, engagement_state, filter_version)
+                   VALUES (%s,%s,'if_else',%s,%s,%s)""",
+                (run_id, node['node_key'], next_key, state, filter_version)
+            )
+            conn.commit()
+            node_key = next_key
+            continue
+
+        # trigger, or any future node_type this walker doesn't specifically
+        # recognize -- advance past it rather than getting stuck.
+        node_key = node['next_node_key']
+
+    return {'status': 'completed'}
+
+
+def recover_blocked_runs(admin_cursor, admin_conn, product_cursor=None, product_conn=None) -> dict:
+    """automation_runs counterpart to recover_blocked_enrollments() above -- identical
+    logic against the new table: re-check every status='blocked' run's eligibility
+    each cycle (same skip_wp_nurture_check-on-warm-track rule) and flip back to
+    'active' on success, closing the same permanently-stuck-blocked incident class
+    for the new engine. next_due_at is left untouched, same rationale: it was
+    already due when the run got blocked, so it's still due now.
+
+    Same WordPress nurture_stood_down write on a recovered warm-track run, same
+    best-effort/non-fatal posture, as recover_blocked_enrollments().
+
+    Returns {'blocked_checked': int, 'recovered': int}."""
     admin_cursor.execute(
-        """SELECT e.id AS enrollment_id, e.lead_id, e.campaign_id, e.current_step,
+        """SELECT r.id AS run_id, r.lead_id, l.email, a.name AS automation_name
+           FROM automation_runs r
+           JOIN leads l ON l.id = r.lead_id
+           JOIN automations a ON a.id = r.automation_id
+           WHERE r.status='blocked'"""
+    )
+    blocked = admin_cursor.fetchall()
+
+    recovered = 0
+    for row in blocked:
+        is_warm_track = (row['automation_name'] or '').endswith(WARM_SUFFIX)
+        elig, _reason = lead_pool.is_eligible(
+            admin_cursor, row['lead_id'], exclude_run_id=row['run_id'],
+            skip_wp_nurture_check=is_warm_track,
+        )
+        if elig:
+            admin_cursor.execute("UPDATE automation_runs SET status='active' WHERE id=%s", (row['run_id'],))
+            admin_conn.commit()
+            recovered += 1
+
+            if is_warm_track and product_conn is not None and row.get('email'):
+                try:
+                    product_cursor.execute(
+                        """UPDATE wp_citemetrix_score_leads
+                           SET nurture_stood_down = 1, nurture_stood_down_at = NOW()
+                           WHERE email = %s AND nurture_stood_down = 0""",
+                        (row['email'],)
+                    )
+                    product_conn.commit()
+                except Exception as e:
+                    print(f"[recover_blocked_runs] WARNING: failed to stand down "
+                          f"WordPress nurture for {row['email']}: {e}")
+
+    return {'blocked_checked': len(blocked), 'recovered': recovered}
+
+
+def process_check_completions_runs(admin_cursor, admin_conn, product_cursor, product_conn=None) -> dict:
+    """automation_runs counterpart to process_check_completions() above -- identical
+    branching rule against the new tables: a lead who completes a /check/ scan while
+    on an active COLD automation gets that run status='cancelled' and is (re)started
+    on the matching WARM automation's graph via _create_or_revive_run(), due_at=now.
+    Kept as its own function (not graph-native) for behavioral parity with the
+    legacy engine during the migration -- a graph-native version of this branch
+    (if_else on check-completion) is future work, not part of this migration.
+
+    Same idempotency-by-construction as process_check_completions(): once a cold run
+    is cancelled here it's excluded from this function's own starting query on the
+    next run, so no separate already-branched check is needed.
+
+    Returns {'cold_active_checked': int, 'branched': int}."""
+    admin_cursor.execute(
+        """SELECT r.id AS run_id, r.lead_id, r.automation_id, l.unsubscribe_token, l.email,
+                  a.name AS automation_name
+           FROM automation_runs r
+           JOIN leads l ON l.id = r.lead_id
+           JOIN automations a ON a.id = r.automation_id
+           WHERE r.status='active'"""
+    )
+    active_cold = admin_cursor.fetchall()
+
+    cold_active_checked = 0
+    branched = 0
+    now = datetime.now()
+    for row in active_cold:
+        warm_automation_id = _matching_warm_automation_id(admin_cursor, row['automation_name'])
+        if not warm_automation_id:
+            continue
+        cold_active_checked += 1
+
+        admin_cursor.execute(
+            "SELECT id FROM lead_events WHERE lead_id=%s AND type='free_check_completed' LIMIT 1",
+            (row['lead_id'],)
+        )
+        fc_event = admin_cursor.fetchone()
+
+        fc_row = None
+        if not fc_event and row['unsubscribe_token']:
+            product_cursor.execute(
+                """SELECT domain, brand_name, category, brand_recognition, category_visibility,
+                          utm_source, utm_medium, utm_campaign, source_page, created_at
+                   FROM wp_citemetrix_freecheck_log
+                   WHERE drip_lead_token=%s ORDER BY created_at DESC LIMIT 1""",
+                (row['unsubscribe_token'],)
+            )
+            fc_row = product_cursor.fetchone()
+
+        if not fc_event and not fc_row:
+            continue
+
+        if not fc_event and fc_row:
+            payload = json.dumps({
+                'domain': fc_row['domain'], 'brand_name': fc_row['brand_name'], 'category': fc_row['category'],
+                'brand_recognition': fc_row['brand_recognition'], 'model_score': fc_row['category_visibility'],
+                'utm_source': fc_row['utm_source'], 'utm_medium': fc_row['utm_medium'], 'utm_campaign': fc_row['utm_campaign'],
+                'source_page': fc_row['source_page'], 'platform_results': None,
+            }, default=str)
+            admin_cursor.execute(
+                """INSERT INTO lead_events (lead_id, occurred_at, type, channel, payload)
+                   VALUES (%s,%s,'free_check_completed','web',%s)""",
+                (row['lead_id'], fc_row['created_at'], payload)
+            )
+            admin_conn.commit()
+
+        admin_cursor.execute("UPDATE automation_runs SET status='cancelled' WHERE id=%s", (row['run_id'],))
+        admin_conn.commit()
+
+        admin_cursor.execute(
+            "SELECT node_key, next_node_key FROM automation_steps WHERE automation_id=%s AND node_type='trigger'",
+            (warm_automation_id,)
+        )
+        trigger = admin_cursor.fetchone()
+        # walk the warm automation's own graph from its trigger to find where a
+        # fresh run actually starts (the first send_email node) -- mirrors
+        # enroll_single_lead()'s "now == now + 0 days" reasoning: a warm automation's
+        # own first delay is 0 days, so walking it costs nothing.
+        outcome = _advance_automation_graph(
+            admin_cursor, admin_conn, warm_automation_id, None,
+            trigger['next_node_key'] if trigger else None, anchor_time=now, lead_id=row['lead_id'],
+        ) if trigger else {'status': 'completed'}
+
+        result = {'enrolled': False, 'reason': 'warm automation has no reachable send node'}
+        if outcome['status'] == 'next_send':
+            result = _create_or_revive_run(admin_cursor, admin_conn, warm_automation_id, row['lead_id'],
+                                             outcome['node_key'], due_at=now)
+
+        if result['enrolled']:
+            admin_cursor.execute(
+                """INSERT INTO lead_events (lead_id, occurred_at, type, channel, payload)
+                   VALUES (%s,NOW(),'note',NULL,%s)""",
+                (row['lead_id'], json.dumps({'event': 'branched_to_warm', 'from_automation_id': row['automation_id'], 'to_automation_id': warm_automation_id}))
+            )
+            admin_conn.commit()
+            branched += 1
+
+            if product_conn is not None and row.get('email'):
+                try:
+                    product_cursor.execute(
+                        """UPDATE wp_citemetrix_score_leads
+                           SET nurture_stood_down = 1, nurture_stood_down_at = NOW()
+                           WHERE email = %s AND nurture_stood_down = 0""",
+                        (row['email'],)
+                    )
+                    product_conn.commit()
+                except Exception as e:
+                    print(f"[process_check_completions_runs] WARNING: failed to stand down "
+                          f"WordPress nurture for {row['email']}: {e}")
+
+    return {'cold_active_checked': cold_active_checked, 'branched': branched}
+
+
+def process_due_runs(admin_cursor, admin_conn, send_email_fn, base_url: str, max_sends: int = 50) -> dict:
+    """automation_runs counterpart to process_due_enrollments() -- the new engine's
+    sender. A run's current_node_key always points at a send_email node when it is
+    selected below: every non-send node between one send and the next is walked
+    immediately by _advance_automation_graph(), either right after the previous send
+    (see the tail of this function) or by whatever creates the run in the first
+    place -- so 'due' here means exactly what it means in the legacy engine, 'this
+    run's next scheduled SEND is due now', not 'some node is due'.
+
+    Every send-affecting check runs in the SAME order, calling the SAME shared
+    functions, as process_due_enrollments(): unsubscribe (terminal) -> suppression
+    (status='suppressed' + log row) -> lead_pool.is_eligible() re-check
+    (status='blocked' + log row) -> render via the same render_merge_tags()/
+    apply_cta_tags() -> the same unsubscribe footer -> the same send_email_fn. On
+    success: walk the graph forward from the sent node's next_node_key, anchored on
+    the actual send time, and persist wherever the walk lands (another send node,
+    unsubscribed, or completed). On failure: log status='failed', do NOT advance --
+    next_due_at stays in the past and this run is picked up again next cron cycle,
+    matching process_due_enrollments() exactly (no new retry/backoff introduced)."""
+    admin_cursor.execute(
+        """SELECT r.id AS run_id, r.lead_id, r.automation_id, r.current_node_key,
+                  a.name AS automation_name,
                   l.email, l.first_name, l.last_name, l.company, l.unsubscribe_token,
-                  l.suppressed_at, l.suppression_reason,
+                  l.suppressed_at, l.suppression_reason, l.email_verification_status,
                   (s.email_address IS NOT NULL OR sy.email_address IS NOT NULL) AS is_live_suppressed,
                   (SELECT payload FROM lead_events
                      WHERE lead_id = l.id AND type = 'free_check_completed'
                      ORDER BY id DESC LIMIT 1) AS fc_payload
-           FROM drip_enrollments e
-           JOIN leads l ON l.id = e.lead_id
-           JOIN drip_campaigns c ON c.id = e.campaign_id
+           FROM automation_runs r
+           JOIN automations a ON a.id = r.automation_id
+           JOIN leads l ON l.id = r.lead_id
            LEFT JOIN ses_suppressions s ON s.email_address = l.email
            LEFT JOIN sendy_suppressions sy ON sy.email_address = l.email
-           WHERE e.status='active' AND e.next_send_due_at <= NOW() AND c.active=1
-           ORDER BY e.next_send_due_at ASC LIMIT %s""",
+           WHERE r.status='active' AND r.next_due_at <= NOW() AND a.status='active'
+           ORDER BY r.next_due_at ASC LIMIT %s""",
         (max_sends,)
     )
     due = admin_cursor.fetchall()
 
-    sent, failed, skipped_unsub, skipped_suppressed, skipped_blocked = 0, 0, 0, 0, 0
+    sent, failed, skipped_unsub, skipped_suppressed, skipped_blocked, skipped_rate_limited = 0, 0, 0, 0, 0, 0
     for row in due:
         if row['suppression_reason'] == 'unsubscribed':
-            admin_cursor.execute("UPDATE drip_enrollments SET status='unsubscribed' WHERE id=%s", (row['enrollment_id'],))
+            admin_cursor.execute("UPDATE automation_runs SET status='unsubscribed' WHERE id=%s", (row['run_id'],))
             admin_conn.commit()
             skipped_unsub += 1
             continue
 
-        next_step_order = row['current_step'] + 1
         admin_cursor.execute(
-            "SELECT * FROM drip_steps WHERE campaign_id=%s AND step_order=%s",
-            (row['campaign_id'], next_step_order)
+            "SELECT node_key, config, next_node_key FROM automation_steps WHERE automation_id=%s AND node_key=%s AND node_type='send_email'",
+            (row['automation_id'], row['current_node_key'])
         )
-        step = admin_cursor.fetchone()
-        if not step:
-            admin_cursor.execute("UPDATE drip_enrollments SET status='completed' WHERE id=%s", (row['enrollment_id'],))
+        node = admin_cursor.fetchone()
+        if not node:
+            # current_node_key doesn't resolve to a send_email node -- the graph
+            # can't be walked further for this run. Treat as completed rather than
+            # re-selecting it forever (mirrors process_due_enrollments()'s "no next
+            # step -> completed" branch for the equivalent dangling case).
+            admin_cursor.execute("UPDATE automation_runs SET status='completed' WHERE id=%s", (row['run_id'],))
             admin_conn.commit()
             continue
+        email_id = json.loads(node['config'])['email_id']
+        admin_cursor.execute("SELECT * FROM emails WHERE id=%s", (email_id,))
+        email = admin_cursor.fetchone()
 
         if row['suppressed_at'] is not None or row['is_live_suppressed']:
-            admin_cursor.execute("UPDATE drip_enrollments SET status='suppressed' WHERE id=%s", (row['enrollment_id'],))
+            admin_cursor.execute("UPDATE automation_runs SET status='suppressed' WHERE id=%s", (row['run_id'],))
             admin_cursor.execute(
-                "INSERT INTO drip_send_log (enrollment_id, step_id, status, error) VALUES (%s,%s,'suppressed',%s)",
-                (row['enrollment_id'], step['id'], f"{row['email']} is on the SES suppression list at send time")
+                "INSERT INTO drip_send_log (run_key, email_id, node_key, status, error) VALUES (%s,%s,%s,'suppressed',%s)",
+                (row['run_id'], email_id, node['node_key'], f"{row['email']} is on the SES suppression list at send time")
             )
             admin_conn.commit()
             skipped_suppressed += 1
             continue
 
-        elig, elig_reason = lead_pool.is_eligible(admin_cursor, row['lead_id'], exclude_enrollment_id=row['enrollment_id'])
-        if not elig:
-            admin_cursor.execute("UPDATE drip_enrollments SET status='blocked' WHERE id=%s", (row['enrollment_id'],))
+        # 2026-09-23 -- see process_due_enrollments()'s identical gate for the full
+        # rationale. Same scoping: 'invalid'/'disposable' only, not bare 'unverified'.
+        if row['email_verification_status'] in ('invalid', 'disposable'):
+            admin_cursor.execute("UPDATE automation_runs SET status='blocked' WHERE id=%s", (row['run_id'],))
             admin_cursor.execute(
-                "INSERT INTO drip_send_log (enrollment_id, step_id, status, error) VALUES (%s,%s,'blocked',%s)",
-                (row['enrollment_id'], step['id'], f"{row['email']} failed the pool eligibility gate at send time: {elig_reason}")
+                "INSERT INTO drip_send_log (run_key, email_id, node_key, status, error) VALUES (%s,%s,%s,'blocked',%s)",
+                (row['run_id'], email_id, node['node_key'], f"{row['email']} is verification-status '{row['email_verification_status']}' at send time")
+            )
+            admin_conn.commit()
+            skipped_blocked += 1
+            continue
+
+        is_warm_track = (row['automation_name'] or '').endswith(WARM_SUFFIX)
+        elig, elig_reason = lead_pool.is_eligible(
+            admin_cursor, row['lead_id'], exclude_run_id=row['run_id'],
+            skip_wp_nurture_check=is_warm_track,
+        )
+        if not elig:
+            admin_cursor.execute("UPDATE automation_runs SET status='blocked' WHERE id=%s", (row['run_id'],))
+            admin_cursor.execute(
+                "INSERT INTO drip_send_log (run_key, email_id, node_key, status, error) VALUES (%s,%s,%s,'blocked',%s)",
+                (row['run_id'], email_id, node['node_key'], f"{row['email']} failed the pool eligibility gate at send time: {elig_reason}")
             )
             admin_conn.commit()
             skipped_blocked += 1
@@ -965,73 +1501,102 @@ def process_due_enrollments(admin_cursor, admin_conn, send_email_fn, base_url: s
                 lead['model_score'] = fc.get('model_score')
                 platform_results = fc.get('platform_results')
                 if isinstance(platform_results, str):
-                    platform_results = json.loads(platform_results)  # double-encoded in the payload
+                    platform_results = json.loads(platform_results)
                 checked, mentioned, missing = _platform_stats(platform_results)
                 lead['platforms_checked_count'] = checked
                 lead['platforms_mentioned_count'] = mentioned
                 lead['missing_platforms'] = missing
             except (ValueError, TypeError):
-                pass  # malformed payload -- render_merge_tags' fallbacks cover it
+                pass
         unsub_url = f"{base_url}/unsubscribe/{row['unsubscribe_token']}"
 
-        if step['is_survey_step']:
-            survey_url = f"https://citemetrix.com/survey/?epoch={step['survey_epoch'] or ''}&campaign={row['campaign_id']}&source=drip&email={row['email']}"
-            subject = render_merge_tags(step['subject'], lead) or "Quick question - what stopped you?"
-            body = render_merge_tags(step['body'], lead) or f"Hi {lead['first_name'] or 'there'},\n\n{survey_url}"
+        ceiling_ok, ceiling_count = check_send_ceiling(admin_cursor, row['email'])
+        if not ceiling_ok:
+            admin_cursor.execute(
+                "INSERT INTO drip_send_log (run_key, email_id, node_key, status, error) VALUES (%s,%s,%s,'rate_limited',%s)",
+                (row['run_id'], email_id, node['node_key'], f"{row['email']} already received {ceiling_count} sends in the last 24h (cap {SEND_CEILING_MAX_PER_24H})")
+            )
+            admin_cursor.execute(
+                "SELECT COUNT(*) AS n FROM drip_send_log WHERE run_key=%s AND status='rate_limited'",
+                (row['run_id'],)
+            )
+            deferrals = admin_cursor.fetchone()['n']
+            if deferrals >= SEND_CEILING_MAX_DEFERRALS:
+                admin_cursor.execute("UPDATE automation_runs SET status='blocked' WHERE id=%s", (row['run_id'],))
+            else:
+                new_due = datetime.now() + timedelta(hours=24)
+                admin_cursor.execute(
+                    "UPDATE automation_runs SET next_due_at=%s WHERE id=%s",
+                    (new_due.strftime('%Y-%m-%d %H:%M:%S'), row['run_id'])
+                )
+            admin_conn.commit()
+            _alert_send_ceiling_tripped(admin_cursor, send_email_fn, row['email'], ceiling_count)
+            skipped_rate_limited += 1
+            continue
+
+        if email['is_survey_step']:
+            survey_url = f"https://citemetrix.com/survey/?epoch={email['survey_epoch'] or ''}&campaign={row['automation_id']}&source=drip&email={row['email']}"
+            subject = render_merge_tags(email['subject'], lead) or "Quick question - what stopped you?"
+            body = render_merge_tags(email['body_text'], lead) or f"Hi {lead['first_name'] or 'there'},\n\n{survey_url}"
             body += f"\n\n{survey_url}"
             body_html = None
         else:
-            subject = render_merge_tags(step['subject'], lead)
-            body = render_merge_tags(step['body'], lead)
-            body_html = render_merge_tags(step.get('body_html'), lead)
-            body, body_html = apply_cta_tags(body, body_html, step, lead_token=row['unsubscribe_token'])
+            subject = render_merge_tags(email['subject'], lead)
+            body = render_merge_tags(email['body_text'], lead)
+            body_html = render_merge_tags(email['body_html'], lead)
+            # emails carries cta_key/cta_text in the same shape apply_cta_tags()
+            # already expects from a drip_steps row -- a small shim dict means the
+            # shared function needs no changes to serve both engines.
+            step_shim = {'cta_text': email['cta_text'], 'cta_key': email['cta_key'], 'step_order': 0}
+            body, body_html = apply_cta_tags(body, body_html, step_shim, lead_token=row['unsubscribe_token'])
 
         body += build_unsubscribe_footer(unsub_url)
         if body_html:
             body_html += build_unsubscribe_footer_html(unsub_url)
+            body_html = wrap_html_document(body_html)
 
-        send_kwargs = {'to': lead['email'], 'subject': subject, 'body_text': body}
+        send_kwargs = {'to': lead['email'], 'subject': subject, 'body_text': body,
+                       'list_unsubscribe': unsub_url}
         if body_html:
             send_kwargs['body_html'] = body_html
         ok, result = send_email_fn(**send_kwargs)
 
         if ok:
-            next_order2 = next_step_order + 1
             admin_cursor.execute(
-                "SELECT day_offset FROM drip_steps WHERE campaign_id=%s AND step_order=%s",
-                (row['campaign_id'], next_order2)
+                "INSERT INTO drip_send_log (run_key, email_id, node_key, provider_msg_id, status) VALUES (%s,%s,%s,%s,'sent')",
+                (row['run_id'], email_id, node['node_key'], result)
             )
-            following = admin_cursor.fetchone()
-            if following:
-                # day_offset on step N+1 is days after step N actually SENT, not days
-                # after original enrollment (that was the bug behind the 2026-09-08
-                # same-day step1+step2 incident -- a late-sending step1 left step2's
-                # enrolled_at-anchored due date already in the past). Anchor on now,
-                # the moment this step's send just completed, instead.
-                new_due = datetime.now() + timedelta(days=following['day_offset'])
+            admin_conn.commit()
+
+            outcome = _advance_automation_graph(
+                admin_cursor, admin_conn, row['automation_id'], row['run_id'], node['next_node_key'],
+                anchor_time=datetime.now(), lead_id=row['lead_id'],
+            )
+            if outcome['status'] == 'next_send':
                 admin_cursor.execute(
-                    "UPDATE drip_enrollments SET current_step=%s, next_send_due_at=%s, last_sent_at=NOW() WHERE id=%s",
-                    (next_step_order, new_due.strftime('%Y-%m-%d %H:%M:%S'), row['enrollment_id'])
+                    "UPDATE automation_runs SET current_node_key=%s, next_due_at=%s, last_sent_at=NOW(), last_email_id=%s WHERE id=%s",
+                    (outcome['node_key'], outcome['due_at'].strftime('%Y-%m-%d %H:%M:%S'), email_id, row['run_id'])
+                )
+            elif outcome['status'] == 'unsubscribed':
+                admin_cursor.execute(
+                    "UPDATE automation_runs SET status='unsubscribed', last_sent_at=NOW(), last_email_id=%s WHERE id=%s",
+                    (email_id, row['run_id'])
                 )
             else:
                 admin_cursor.execute(
-                    "UPDATE drip_enrollments SET current_step=%s, status='completed', last_sent_at=NOW() WHERE id=%s",
-                    (next_step_order, row['enrollment_id'])
+                    "UPDATE automation_runs SET status='completed', last_sent_at=NOW(), last_email_id=%s WHERE id=%s",
+                    (email_id, row['run_id'])
                 )
-            admin_conn.commit()
-            admin_cursor.execute(
-                "INSERT INTO drip_send_log (enrollment_id, step_id, provider_msg_id, status) VALUES (%s,%s,%s,'sent')",
-                (row['enrollment_id'], step['id'], result)
-            )
             admin_conn.commit()
             sent += 1
         else:
             admin_cursor.execute(
-                "INSERT INTO drip_send_log (enrollment_id, step_id, status, error) VALUES (%s,%s,'failed',%s)",
-                (row['enrollment_id'], step['id'], str(result)[:500])
+                "INSERT INTO drip_send_log (run_key, email_id, node_key, status, error) VALUES (%s,%s,%s,'failed',%s)",
+                (row['run_id'], email_id, node['node_key'], str(result)[:500])
             )
             admin_conn.commit()
             failed += 1
 
     return {'checked': len(due), 'sent': sent, 'failed': failed, 'skipped_unsubscribed': skipped_unsub,
-            'skipped_suppressed': skipped_suppressed, 'skipped_blocked': skipped_blocked}
+            'skipped_suppressed': skipped_suppressed, 'skipped_blocked': skipped_blocked,
+            'skipped_rate_limited': skipped_rate_limited}

@@ -67,6 +67,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(BASE, ".env"))
 import pymysql
 import leads_drip
+import lead_pool
 
 GENERIC_NURTURE_CAMPAIGN_NAME = "Free-Check Nurture — Generic"
 
@@ -160,13 +161,20 @@ def main():
         # even a bad one, just nothing. Kept broken out by reason (not summed into
         # auto_enroll_skipped_count) so a real bug (skipped_nurture_owned climbing) reads
         # differently from expected behavior (skipped_no_email on a LinkedIn-only lead).
-        skip_reasons = {'nurture_owned': 0, 'cluster_conflict': 0, 'no_email': 0, 'suppressed': 0}
+        skip_reasons = {'nurture_owned': 0, 'cluster_conflict': 0, 'no_email': 0, 'suppressed': 0, 'other': 0}
 
-        acur.execute("SELECT id FROM drip_campaigns WHERE name=%s", (GENERIC_NURTURE_CAMPAIGN_NAME,))
-        campaign_row = acur.fetchone()
-        generic_campaign_id = campaign_row["id"] if campaign_row else None
-        if not generic_campaign_id:
-            print(f"NOTE: campaign '{GENERIC_NURTURE_CAMPAIGN_NAME}' not found -- new leads will not be auto-enrolled this run.")
+        # 2026-09-25: redirected from the legacy drip_campaigns/enroll_batch() path to the
+        # new engine (automations/automation_runs) -- the legacy campaign's send function
+        # (process_due_enrollments()) was removed entirely today as part of retiring the
+        # dead legacy system, so continuing to enroll here would silently orphan every new
+        # free-check lead going forward (exactly the bug this replaces -- see the alfixit04
+        # incident). Automation 8 starts at 'delay1' (a 2-day wait node), matching legacy
+        # campaign 11's own step_order=1 day_offset=2 -- not skipping straight to send1.
+        acur.execute("SELECT id FROM automations WHERE name=%s", (GENERIC_NURTURE_CAMPAIGN_NAME,))
+        automation_row = acur.fetchone()
+        generic_automation_id = automation_row["id"] if automation_row else None
+        if not generic_automation_id:
+            print(f"NOTE: automation '{GENERIC_NURTURE_CAMPAIGN_NAME}' not found -- new leads will not be auto-enrolled this run.")
 
         for r in score_leads:
             # has_touch (stage classification: "has this person been contacted at all,
@@ -267,7 +275,7 @@ def main():
             # exactly as it does for a CSV import. Campaign stays active=0
             # (dark) until SS14.3's cutover, so this creates real enrollment
             # rows but cannot cause a real send.
-            if is_new_lead and generic_campaign_id:
+            if is_new_lead and generic_automation_id:
                 # step1brief.md SS17 step 4: settle the ai_referral_platform placement
                 # question by giving it a real home in source_refs.source instead of
                 # only the denormalized leads.ai_referral_platform column -- prefer the
@@ -284,16 +292,34 @@ def main():
                     (lead_id, source_ref_id)
                 )
                 acur.execute("UPDATE leads SET original_source_ref_id=%s WHERE id=%s", (source_ref_id, lead_id))
+                tag_names = ["channel:free_check"]
+                if ai_referral_platform:
+                    tag_names.append(f"campaign:{ai_referral_platform.lower()}")
+                leads_drip.tag_lead(acur, lead_id, tag_names)
                 admin.commit()
-                enroll_result = leads_drip.enroll_batch(acur, admin, generic_campaign_id, source_ref_id)
-                if enroll_result["enrolled"]:
-                    auto_enrolled_count += 1
-                else:
+                if not r.get("email"):
                     auto_enroll_skipped_count += 1
-                    skip_reasons['nurture_owned'] += enroll_result.get('skipped_nurture_owned', 0)
-                    skip_reasons['cluster_conflict'] += enroll_result.get('skipped_cluster_conflict', 0)
-                    skip_reasons['no_email'] += enroll_result.get('skipped_no_email', 0)
-                    skip_reasons['suppressed'] += enroll_result.get('skipped_suppressed', 0)
+                    skip_reasons['no_email'] += 1
+                else:
+                    eligible, elig_reason = lead_pool.is_eligible(acur, lead_id)
+                    if eligible:
+                        run_result = leads_drip._create_or_revive_run(acur, admin, generic_automation_id, lead_id, 'delay1')
+                        if run_result['enrolled']:
+                            auto_enrolled_count += 1
+                        else:
+                            auto_enroll_skipped_count += 1
+                    elif elig_reason.startswith('suppressed_at='):
+                        auto_enroll_skipped_count += 1
+                        skip_reasons['suppressed'] += 1
+                    elif 'wp_nurture_owned' in elig_reason:
+                        auto_enroll_skipped_count += 1
+                        skip_reasons['nurture_owned'] += 1
+                    elif 'active enrollment' in elig_reason:
+                        auto_enroll_skipped_count += 1
+                        skip_reasons['cluster_conflict'] += 1
+                    else:
+                        auto_enroll_skipped_count += 1
+                        skip_reasons['other'] += 1
 
             # touch_sent events -- one per WP flag set, idempotent per (lead, flag) via payload check.
             for flag in TOUCH_FLAGS:
@@ -325,7 +351,7 @@ def main():
             # ['cluster_conflict'] climbing on genuinely new leads; no_email/suppressed
             # are expected, routine skips (LinkedIn-only contacts, bounced addresses) and
             # are logged for visibility but don't count toward the anomaly signal.
-            total_problem = skip_reasons['nurture_owned'] + skip_reasons['cluster_conflict']
+            total_problem = skip_reasons['nurture_owned'] + skip_reasons['cluster_conflict'] + skip_reasons['other']
             acur.execute(
                 "INSERT INTO cron_run_log (job_name, total_processed, total_problem, detail_json) VALUES (%s,%s,%s,%s)",
                 ('lead_migration_sync', migrated, total_problem, json.dumps({

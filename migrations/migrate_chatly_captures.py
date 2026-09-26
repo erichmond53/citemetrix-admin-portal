@@ -36,6 +36,7 @@ sys.path.insert(0, BASE)
 from dotenv import load_dotenv
 load_dotenv(os.path.join(BASE, ".env"))
 import pymysql
+import leads_drip
 
 LEGACY_TABLE = "wp_chatly_leads"
 
@@ -148,6 +149,7 @@ def main():
                     (lead_id, source_ref_id)
                 )
                 acur.execute("UPDATE leads SET original_source_ref_id=%s WHERE id=%s", (source_ref_id, lead_id))
+                leads_drip.tag_lead(acur, lead_id, "channel:chat")
                 new_leads += 1
             else:
                 resynced += 1

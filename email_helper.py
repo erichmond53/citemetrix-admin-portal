@@ -49,6 +49,7 @@ def send_email(
     from_address: Optional[str] = None,
     configuration_set: Optional[str] = None,
     attachments: Optional[List[str]] = None,
+    list_unsubscribe: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
     """
     Send an email via AWS SES.
@@ -74,8 +75,21 @@ def send_email(
                    for event tracking (opens/clicks/bounces via SNS).
                    Omit for transactional sends that don't need tracking.
         attachments: Optional list of absolute file paths to attach.
-                   Switches to SES's raw-MIME send path (send_raw_email) —
+                   Switches to SES's raw-MIME send path (send_raw_email) --
                    the simple send_email API has no attachment support.
+        list_unsubscribe: Optional recipient-specific HTTPS unsubscribe URL
+                   (e.g. https://citemetrix.com/unsubscribe/<token>). When set,
+                   also switches to the raw-MIME send path, since List-Unsubscribe/
+                   List-Unsubscribe-Post are real MIME headers the simple
+                   send_email API can't set. Sent alongside the existing mailto
+                   fallback so mail clients (Gmail etc.) render a native one-click
+                   Unsubscribe button next to the sender -- 2026-09-25 deliverability
+                   fix: without the https URL + List-Unsubscribe-Post pair, clients
+                   won't show that button, and a bored recipient's next-easiest
+                   option is Report Spam instead, which is far more damaging to
+                   sender reputation than an unsubscribe. See app.py's
+                   /unsubscribe/<token> route (POST branch) for the RFC 8058
+                   one-click receiving end.
 
     Returns:
         (success, message_id_or_error)
@@ -88,11 +102,12 @@ def send_email(
         logger.error("SES_FROM_EMAIL not configured; cannot send email")
         return False, "SES_FROM_EMAIL not configured"
 
-    if attachments:
+    if attachments or list_unsubscribe:
         return _send_raw_with_attachments(
             to=to, subject=subject, body_text=body_text, body_html=body_html,
             reply_to=reply_to, cc=cc, from_address=from_address,
-            configuration_set=configuration_set, attachments=attachments,
+            configuration_set=configuration_set, attachments=attachments or [],
+            list_unsubscribe=list_unsubscribe,
         )
 
     # Build the message body — always include text, optionally include
@@ -151,9 +166,13 @@ def _send_raw_with_attachments(
     from_address: str,
     configuration_set: Optional[str],
     attachments: List[str],
+    list_unsubscribe: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
     """SES has no attachment support in its simple send_email API — this
-    builds a raw MIME message and sends it via send_raw_email instead."""
+    builds a raw MIME message and sends it via send_raw_email instead. Also the
+    path used whenever list_unsubscribe is set (attachments or not), since
+    List-Unsubscribe/List-Unsubscribe-Post are real MIME headers the simple
+    send_email API can't set."""
     msg = MIMEMultipart('mixed')
     msg['Subject'] = subject
     msg['From'] = from_address
@@ -162,6 +181,16 @@ def _send_raw_with_attachments(
         msg['Reply-To'] = reply_to
     if cc:
         msg['Cc'] = ', '.join(cc)
+    if list_unsubscribe:
+        # RFC 8058 one-click: BOTH headers required together, or mail clients
+        # (Gmail etc.) won't render the native Unsubscribe button at all.
+        # mailto kept as a fallback for clients that only understand the older
+        # RFC 2369 form.
+        msg['List-Unsubscribe'] = (
+            f"<{list_unsubscribe}>, "
+            f"<mailto:info@citemetrix.com?subject=Unsubscribe%20AI%20Visibility%20Report>"
+        )
+        msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
 
     body_part = MIMEMultipart('alternative')
     body_part.attach(MIMEText(body_text, 'plain', 'UTF-8'))

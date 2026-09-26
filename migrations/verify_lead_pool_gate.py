@@ -43,7 +43,7 @@ def main():
         for l in leads:
             elig, reason = lead_pool.is_eligible(cur, l["id"])
             tag = "ELIGIBLE" if elig else "blocked "
-            print(f"  lead {l['id']:>3} ({l['email']:<40}) cluster={str(l['person_cluster_id']):<5} -> {tag}: {reason}")
+            print(f"  lead {l['id']:>3} ({(l['email'] or ''):<40}) cluster={str(l['person_cluster_id']):<5} -> {tag}: {reason}")
             if elig:
                 eligible_ids.append(l["id"])
 
