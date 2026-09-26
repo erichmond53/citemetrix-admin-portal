@@ -273,6 +273,12 @@
     </aside>
     <script>
         let ldpCurrentId = null;
+        const LDP_PERSONAS = [
+            { value: '', label: 'Uncategorized' },
+            { value: 'principal', label: 'Agency Principals' },
+            { value: 'acfl', label: 'Agency Client-Facing Leadership' },
+            { value: 'brand', label: 'Brand & SMB Marketing Leaders' },
+        ];
 
         function ldpEsc(s) {
             const d = document.createElement('div');
@@ -422,8 +428,15 @@
             ).join('');
             if (!timeline) timeline = '<p class="ldp-empty">No recorded activity yet.</p>';
 
+            const categoryOptions = LDP_PERSONAS.map(p =>
+                `<option value="${p.value}" ${p.value === (l.category || '') ? 'selected' : ''}>${p.label}</option>`
+            ).join('');
+            const category = '<div class="ldp-row"><span class="k">Persona</span>' +
+                '<select id="ldp-category-select" onchange="ldpSetCategory(this.value)">' + categoryOptions + '</select></div>';
+
             document.getElementById('ldp-body').innerHTML =
                 '<div class="ldp-section"><h3>Identity</h3>' + identity + touches + '</div>' +
+                '<div class="ldp-section"><h3>Category</h3>' + category + '</div>' +
                 '<div class="ldp-section"><h3>Attribution</h3>' + attribution + '</div>' +
                 '<div class="ldp-section"><h3>Scan Report</h3>' + scanReport + '</div>' +
                 '<div class="ldp-section"><h3>State</h3>' + state + '</div>' +
@@ -459,6 +472,16 @@
                 ldpStatus('Stage updated.', false);
                 ldpRefresh();
             } catch (e) { ldpStatus('Could not update stage.', true); }
+        }
+        async function ldpSetCategory(persona) {
+            const fd = new FormData(); fd.append('persona', persona);
+            try {
+                const r = await fetch('/api/leads/' + ldpCurrentId + '/set-category', { method: 'POST', body: fd });
+                const j = await r.json();
+                if (!r.ok) { ldpStatus(j.error || 'Could not update category.', true); return; }
+                ldpStatus('Category updated.', false);
+                ldpRefresh();
+            } catch (e) { ldpStatus('Could not update category.', true); }
         }
         async function ldpToggleExclude() {
             try {

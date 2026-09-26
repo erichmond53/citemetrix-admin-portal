@@ -9143,6 +9143,52 @@ def api_leads_set_stage(lead_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/leads/<int:lead_id>/set-category', methods=['POST'])
+@login_required
+@role_required('admin', 'sales', 'marketing')
+def api_leads_set_category(lead_id):
+    """Manual persona categorization (2026-09-26) -- Eric recognized some legacy-campaign-
+    categorized.csv leads (imported un-tagged, stamped 'legacy-other') as real Agency
+    Principal / Agency Client-Facing Leadership / Brand & SMB prospects. Reuses
+    MARBLISM_PERSONA_MAP's exact tags rather than a parallel taxonomy (Eric's call) -- so
+    setting a category here also makes the lead a live member of the matching 'Marblism —
+    ...' saved segment, and eligible next time /api/drip-leads/enroll-segment is clicked for
+    that persona. Exclusive: a lead has at most one of these 3 tags at a time, so this always
+    removes the other two before adding the new one, never leaves two persona tags stacked."""
+    persona = (request.form.get('persona') or '').strip()
+    if persona and persona not in MARBLISM_PERSONA_MAP:
+        return jsonify({'error': 'Unknown persona.'}), 400
+    try:
+        conn = get_admin_db()
+        try:
+            with conn.cursor() as cur:
+                all_tags = [m['tag'] for m in MARBLISM_PERSONA_MAP.values()]
+                fmt = ','.join(['%s'] * len(all_tags))
+                cur.execute(
+                    f"DELETE lt FROM lead_tags lt JOIN tags t ON t.id=lt.tag_id "
+                    f"WHERE lt.lead_id=%s AND t.name IN ({fmt})",
+                    (lead_id, *all_tags)
+                )
+                if persona:
+                    tag_name = MARBLISM_PERSONA_MAP[persona]['tag']
+                    cur.execute("SELECT id FROM tags WHERE name=%s", (tag_name,))
+                    tag_row = cur.fetchone()
+                    if not tag_row:
+                        return jsonify({'error': f'Tag {tag_name} does not exist.'}), 500
+                    cur.execute(
+                        "INSERT INTO lead_tags (tag_id, lead_id) VALUES (%s, %s) "
+                        "ON DUPLICATE KEY UPDATE added_at=added_at",
+                        (tag_row['id'], lead_id)
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+        return jsonify({'success': True, 'category': persona or None})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 def _platform_mentions(platform_results):
     """[{platform, mentioned}] for every platform the free check actually reached (status
     'success' only -- a skipped/errored platform has no real mention verdict to show).
@@ -9206,6 +9252,21 @@ def api_leads_detail(lead_id):
             lead = cur.fetchone()
             if not lead:
                 return jsonify({'error': 'Lead not found.'}), 404
+
+            # Persona category (marblism-weekly-import-auto-enroll-spec-2026-09-23.md's
+            # 3-persona taxonomy, reused here per Eric's 2026-09-26 decision: manually
+            # categorizing a legacy-campaign lead uses the SAME marblism-* tags, so it joins
+            # the same saved segment and becomes eligible for the same one-click cold
+            # automation as a real Marblism-sourced lead -- one taxonomy, not a parallel one.
+            _persona_tags = [m['tag'] for m in MARBLISM_PERSONA_MAP.values()]
+            _fmt = ','.join(['%s'] * len(_persona_tags))
+            cur.execute(
+                f"SELECT t.name FROM lead_tags lt JOIN tags t ON t.id=lt.tag_id "
+                f"WHERE lt.lead_id=%s AND t.name IN ({_fmt})",
+                (lead_id, *_persona_tags)
+            )
+            _cat_tag = {r['name'] for r in cur.fetchall()}
+            lead['category'] = next((k for k, m in MARBLISM_PERSONA_MAP.items() if m['tag'] in _cat_tag), None)
 
             cur.execute(
                 "SELECT t.path, t.occurred_at, sr.source, sr.label, sr.kind "
@@ -9320,7 +9381,7 @@ def api_leads_detail(lead_id):
                 "FROM drip_enrollments e JOIN drip_campaigns c ON c.id=e.campaign_id WHERE e.lead_id=%s ORDER BY e.enrolled_at DESC",
                 (lead_id,)
             )
-            enrollments = cur.fetchall()
+            enrollments = list(cur.fetchall())
             for e in enrollments:
                 timeline.append({'occurred_at': e['enrolled_at'], 'text': f"Enrolled in {e['campaign_name']}"})
                 e['block_reason'] = None
